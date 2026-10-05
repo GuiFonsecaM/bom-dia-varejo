@@ -162,12 +162,32 @@ def posicionais():
 SEM_JANELA = opcao("--saida") is not None   # modo servidor
 
 
+def carregar_json(texto):
+    """Lê o JSON tolerando aspas "inteligentes" (“ ” ‘ ’) que o iPhone às vezes
+    coloca. Se mesmo assim falhar, mostra o começo do texto recebido no log."""
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError as erro:
+        corrigido = (texto.replace("\u201c", '"').replace("\u201d", '"')
+                     .replace("\u201e", '"').replace("\u00ab", '"').replace("\u00bb", '"')
+                     .replace("\u2018", "'").replace("\u2019", "'").replace("\u00a0", " "))
+        try:
+            dados = json.loads(corrigido)
+            print("Aviso: o JSON veio com aspas curvas; corrigido automaticamente.")
+            return dados
+        except json.JSONDecodeError:
+            pass
+        raise SystemExit(
+            f"JSON inválido ({erro}).\nComeço do que chegou: {texto[:300]!r}\n"
+            f"Fim do que chegou: {texto[-150:]!r}\nTamanho: {len(texto)} caracteres")
+
+
 def ler_roteiro():
     arquivos = posicionais()
     if arquivos:
         texto = Path(arquivos[0]).read_text(encoding="utf-8-sig")
         texto = re.sub(r"^\s*```(?:json)?\s*$", "", texto, flags=re.M).strip()
-        return json.loads(texto)
+        return carregar_json(texto)
 
     print("Cole o JSON do roteiro e pressione Enter "
           "(o script continua sozinho quando o JSON estiver completo):\n")
