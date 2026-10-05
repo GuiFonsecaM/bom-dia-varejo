@@ -926,7 +926,7 @@ def montar_story(item, roteiro):
     largura = W - 2 * STORY_MARGEM
     topo = y1 + 110
     limite = H - STORY_BASE_LIVRE
-    rodape_txt = item.get("fonte") or roteiro.get("fonte") or f"Por {NOME_CANAL.title()}"
+    rodape_txt = item.get("fonte") or roteiro.get("fonte") or "Por Bom dia, Varejo"
     data_txt = _data_br(item.get("data") or roteiro.get("data"))
 
     recuo = 46  # espaço entre a bolinha e o texto do tópico
@@ -1044,13 +1044,30 @@ def _linhas_ricas(texto, f_reg, f_neg, largura, d):
     return linhas, espaco
 
 
-def montar_feed(item, laranja):
-    texto = (item.get("texto") or item.get("texto_tela") or "").strip()
-    print(f"-> Feed: {texto[:60]}...")
-    tela = Image.new("RGB", (FEED_W, FEED_H), COR_FEED_FUNDO)
-    d = ImageDraw.Draw(tela)
+def _desenhar_linhas(d, linhas, espaco, x, y, alt, f_normal, f_dest, cor_normal, cor_dest,
+                     largura=None):
+    """Desenha linhas ricas. Trechos **marcados** usam f_dest/cor_dest.
+    Se largura for dada, centraliza cada linha nela."""
+    for linha in linhas:
+        if largura:
+            w = sum(d.textlength(tx, font=f_dest if ng else f_normal)
+                    for palavra in linha for tx, ng in palavra) + espaco * max(0, len(linha) - 1)
+            xl = x + (largura - w) / 2
+        else:
+            xl = x
+        for n, palavra in enumerate(linha):
+            if n:
+                xl += espaco
+            for tx, ng in palavra:
+                f = f_dest if ng else f_normal
+                d.text((xl, y), tx, font=f, fill=cor_dest if ng else cor_normal)
+                xl += d.textlength(tx, font=f)
+        y += alt
+    return y
 
-    # Selo no canto superior direito: logo redondo + nome, com contorno arredondado
+
+def _selo_feed(tela, d, laranja):
+    """Selo no canto superior direito: logo redondo + nome, com contorno arredondado."""
     alt_selo, margem = 118, 64
     logo = _logo(alt_selo - 26, cor_fundo=laranja)
     f1 = fonte(30)
@@ -1064,50 +1081,151 @@ def montar_feed(item, laranja):
     xt = x0 + 13 + logo.width + 18
     d.text((xt, y0 + alt_selo / 2 - 4), nome1, font=f1, fill=COR_FEED_SELO_TEXTO, anchor="ls")
     d.text((xt, y0 + alt_selo / 2 + 4), nome2, font=f1, fill=COR_FEED_SELO_TEXTO, anchor="lt")
+    return y0 + alt_selo
 
-    # Barra laranja no canto inferior esquerdo, com a ponta inclinada
+
+def montar_capa(item, laranja, midia):
+    """1ª imagem do carrossel: foto, degradê preto embaixo, manchete branca com
+    trechos **em laranja**, subtítulo e 'arraste para o lado'."""
+    titulo = (item.get("titulo") or item.get("texto") or "").strip()
+    print(f"-> Capa: {titulo[:60]}...")
+    if midia and midia[0] == "foto":
+        fundo = ImageOps.fit(Image.open(midia[1]).convert("RGB"), (FEED_W, FEED_H),
+                             Image.LANCZOS)
+    else:
+        fundo = Image.new("RGB", (FEED_W, FEED_H), (45, 45, 45))
+    tela = fundo.convert("RGBA")
+
+    # Degradê: transparente até ~35% da altura, quase preto no rodapé
+    grad = Image.new("L", (1, FEED_H))
+    ini_g = int(FEED_H * 0.35)
+    for y in range(FEED_H):
+        p = max(0.0, (y - ini_g) / (FEED_H - ini_g))
+        grad.putpixel((0, y), int(250 * min(1.0, p ** 0.8 * 1.15)))
+    sombra = Image.new("RGBA", (FEED_W, FEED_H), (0, 0, 0, 255))
+    sombra.putalpha(grad.resize((FEED_W, FEED_H)))
+    tela.alpha_composite(sombra)
+    topo = Image.new("L", (1, 260))  # leve sombra no topo para o nome aparecer
+    for y in range(260):
+        topo.putpixel((0, y), int(110 * (1 - y / 260)))
+    sombra_topo = Image.new("RGBA", (FEED_W, 260), (0, 0, 0, 255))
+    sombra_topo.putalpha(topo.resize((FEED_W, 260)))
+    tela.alpha_composite(sombra_topo, (0, 0))
+    d = ImageDraw.Draw(tela)
+
+    # Logo + nome, centralizados no topo
+    logo = _logo(64, cor_fundo=laranja)
+    fn = fonte(40)
+    larg_nome = d.textlength("Bom dia, Varejo", font=fn)
+    x = (FEED_W - (logo.width + 16 + larg_nome)) / 2
+    tela.alpha_composite(logo, (int(x), 56))
+    d.text((x + logo.width + 16, 56 + logo.height / 2), "Bom dia, Varejo", font=fn,
+           fill=(255, 255, 255), anchor="lm")
+
+    # De baixo para cima: seta, "arraste", subtítulo, manchete
+    mx = 64
+    largura = FEED_W - 2 * mx
+    y_seta = FEED_H - 92
+    d.line([(mx, y_seta), (FEED_W - mx, y_seta)], fill=(255, 255, 255), width=3)
+    d.line([(FEED_W - mx - 18, y_seta - 12), (FEED_W - mx, y_seta)], fill=(255, 255, 255), width=3)
+    d.line([(FEED_W - mx - 18, y_seta + 12), (FEED_W - mx, y_seta)], fill=(255, 255, 255), width=3)
+    d.text((mx, y_seta + 22), "ARRASTE PARA O LADO", font=fonte(22), fill=(255, 255, 255))
+
+    y_base = y_seta - 44
+    sub = (item.get("subtitulo") or "").strip()
+    if sub:
+        fs = fonte_regular(36)
+        linhas_s, esp_s = _linhas_ricas(sub, fs, fs, largura, d)
+        alt_s = 46
+        y_base -= len(linhas_s) * alt_s
+        _desenhar_linhas(d, linhas_s, esp_s, mx, y_base, alt_s, fs, fs,
+                         (255, 255, 255), (255, 255, 255), largura)
+        y_base -= 36
+
+    tam = 74
+    while True:
+        ft = fonte(tam)
+        linhas, esp = _linhas_ricas(titulo, ft, ft, largura, d)
+        alt = int(tam * 1.12)
+        if len(linhas) <= 4 or tam <= 48:
+            break
+        tam -= 4
+    _desenhar_linhas(d, linhas, esp, mx, y_base - len(linhas) * alt, alt, ft, ft,
+                     (255, 255, 255), laranja, largura)
+    return tela.convert("RGB")
+
+
+def montar_feed(item, laranja):
+    """Imagens 2 a 5: fundo cinza, selo, barra laranja; título, texto e/ou tópicos."""
+    titulo = (item.get("titulo") or "").strip()
+    texto = (item.get("texto") or item.get("texto_tela") or "").strip()
+    topicos = [str(x).strip() for x in (item.get("topicos") or []) if str(x).strip()]
+    print(f"-> Feed: {(titulo or texto or ' '.join(topicos))[:60]}...")
+    tela = Image.new("RGB", (FEED_W, FEED_H), COR_FEED_FUNDO)
+    d = ImageDraw.Draw(tela)
+    fim_selo = _selo_feed(tela, d, laranja)
+
     alt_barra, larg_barra = 92, int(FEED_W * 0.56)
     d.polygon([(0, FEED_H - alt_barra), (larg_barra, FEED_H - alt_barra),
                (larg_barra + alt_barra, FEED_H), (0, FEED_H)], fill=laranja)
 
-    # Texto laranja, alinhado à esquerda e centralizado na altura
-    x_txt, larg = 120, FEED_W - 120 - 100
-    topo, base = y0 + alt_selo + 70, FEED_H - alt_barra - 90
+    x_txt, larg = 110, FEED_W - 110 - 90
+    recuo = 40
+    topo, base = fim_selo + 60, FEED_H - alt_barra - 70
     fonte_txt = (item.get("fonte") or "").strip()
-    tam = 70
+    tam = 52  # menor que antes, para caber mais informação
     while True:
-        f_reg, f_neg = fonte_regular(tam), fonte(tam)
-        linhas, espaco = _linhas_ricas(texto, f_reg, f_neg, larg, d)
-        alt_linha = int(tam * 1.24)
-        altura = len(linhas) * alt_linha + (int(tam * 1.4) if fonte_txt else 0)
-        if altura <= base - topo or tam <= 38:
+        tt = int(tam * 1.2)
+        f_tit, f_reg, f_neg = fonte(tt), fonte_regular(tam), fonte(tam)
+        blocos, altura = [], 0  # (tipo, linhas, espaço, altura_linha)
+        if titulo:
+            ls, es = _linhas_ricas(titulo, f_tit, f_tit, larg, d)
+            blocos.append(("titulo", ls, es, int(tt * 1.15)))
+            altura += len(ls) * int(tt * 1.15) + int(tam * 0.8)
+        if texto:
+            ls, es = _linhas_ricas(texto, f_reg, f_neg, larg, d)
+            blocos.append(("texto", ls, es, int(tam * 1.3)))
+            altura += len(ls) * int(tam * 1.3) + int(tam * 0.6)
+        for tp in topicos:
+            ls, es = _linhas_ricas(tp, f_reg, f_neg, larg - recuo, d)
+            blocos.append(("topico", ls, es, int(tam * 1.28)))
+            altura += len(ls) * int(tam * 1.28) + int(tam * 0.5)
+        if fonte_txt:
+            altura += int(tam * 1.3)
+        if altura <= base - topo or tam <= 30:
             break
         tam -= 2
+
     y = topo + (base - topo - altura) // 2
-    for linha in linhas:
-        x = x_txt
-        for n, palavra in enumerate(linha):
-            if n:
-                x += espaco
-            for tx, ng in palavra:
-                f = f_neg if ng else f_reg
-                d.text((x, y), tx, font=f, fill=COR_FEED_TEXTO)
-                x += d.textlength(tx, font=f)
-        y += alt_linha
+    for tipo, ls, es, alt in blocos:
+        if tipo == "titulo":
+            y = _desenhar_linhas(d, ls, es, x_txt, y, alt, f_tit, f_tit,
+                                 COR_FEED_TEXTO, laranja) + int(tam * 0.8)
+        elif tipo == "texto":
+            y = _desenhar_linhas(d, ls, es, x_txt, y, alt, f_reg, f_neg,
+                                 COR_FEED_TEXTO, COR_FEED_TEXTO) + int(tam * 0.6)
+        else:
+            r = max(6, int(tam * 0.15))
+            cy = y + tam * 0.58
+            d.ellipse([x_txt + 2, cy - r, x_txt + 2 + 2 * r, cy + r], fill=laranja)
+            y = _desenhar_linhas(d, ls, es, x_txt + recuo, y, alt, f_reg, f_neg,
+                                 COR_FEED_TEXTO, COR_FEED_TEXTO) + int(tam * 0.5)
     if fonte_txt:
-        d.text((x_txt, y + int(tam * 0.5)), fonte_txt, font=fonte_regular(int(tam * 0.45)),
+        d.text((x_txt, y + int(tam * 0.3)), fonte_txt, font=fonte_regular(int(tam * 0.5)),
                fill=(130, 130, 130))
     return tela
 
 
 def gerar_feed(roteiro):
-    imagens = roteiro.get("imagens") or [roteiro]
-    imagens = [i for i in imagens if (i.get("texto") or i.get("texto_tela"))]
-    if not imagens:
-        raise SystemExit("O JSON do feed não tem 'texto' em nenhuma imagem.")
-    if len(imagens) > FEED_MAX:
+    capa = roteiro.get("capa")
+    imagens = [i for i in (roteiro.get("imagens") or ([] if capa else [roteiro]))
+               if (i.get("titulo") or i.get("texto") or i.get("texto_tela") or i.get("topicos"))]
+    if not capa and not imagens:
+        raise SystemExit("O JSON do feed não tem 'capa' nem 'imagens' com texto.")
+    limite = FEED_MAX - (1 if capa else 0)
+    if len(imagens) > limite:
         print(f"Aviso: o feed aceita até {FEED_MAX} imagens; o resto foi ignorado.")
-        imagens = imagens[:FEED_MAX]
+        imagens = imagens[:limite]
     roteiro.setdefault("data", "sem-data")
     categoria = escolher_categoria(roteiro.get("categoria"))
     saida = escolher_destino(f"{roteiro['data']}_feed_{categoria}.jpg",
@@ -1115,16 +1233,32 @@ def gerar_feed(roteiro):
                              tipos=(("Imagem JPG", "*.jpg"), ("Imagem PNG", "*.png")),
                              pasta=PASTA_INICIAL_STORIES)
     laranja = cor_laranja()
+    pasta_tmp = Path(tempfile.mkdtemp(prefix="bom_dia_varejo_feed_"))
+    figuras = []
+    if capa:
+        midia = None
+        if capa.get("busca_imagem"):
+            midia = buscar_midia(capa["busca_imagem"], set(), pasta_tmp, so_fotos=True)
+        figuras.append(montar_capa(capa, laranja, midia))
+    figuras += [montar_feed(item, laranja) for item in imagens]
+
     salvos = []
-    for i, item in enumerate(imagens, 1):
-        img = montar_feed(item, laranja)
-        destino = saida if len(imagens) == 1 else caminho_livre(
+    for i, img in enumerate(figuras, 1):
+        destino = saida if len(figuras) == 1 else caminho_livre(
             saida.with_name(f"{saida.stem}_{i:02d}{saida.suffix}"))
         if destino.suffix.lower() == ".png":
             img.save(destino)
         else:
             img.save(destino, "JPEG", quality=QUALIDADE_JPG, optimize=True)
         salvos.append(destino)
+
+    legenda = (roteiro.get("legenda") or "").strip()
+    if legenda:  # vai para a descrição do post (e para as notas da release no GitHub)
+        arq = caminho_livre(saida.with_name(f"{saida.stem}_legendas.txt"))
+        arq.write_text(legenda + "\n", encoding="utf-8")
+        salvos.append(arq)
+    if APAGAR_TEMPORARIOS:
+        shutil.rmtree(pasta_tmp, ignore_errors=True)
     print("\nPronto! " + "\n        ".join(str(s) for s in salvos))
 
 
@@ -1172,7 +1306,8 @@ def main():
         testar_vozes()
         return
     roteiro = ler_roteiro()
-    if "--feed" in sys.argv or roteiro.get("formato") == "feed" or "imagens" in roteiro:
+    if ("--feed" in sys.argv or roteiro.get("formato") == "feed" or "imagens" in roteiro
+            or "capa" in roteiro):
         gerar_feed(roteiro)
         return
     if ("--story" in sys.argv or roteiro.get("formato") == "story"
