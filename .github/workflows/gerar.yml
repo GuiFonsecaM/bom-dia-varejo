@@ -23,6 +23,7 @@ jobs:
     timeout-minutes: 40
     env:
       NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+      FOTO: ${{ github.event.client_payload.foto }}   # foto enviada do iPhone (opcional)
     steps:
       - uses: actions/checkout@v6
 
@@ -37,6 +38,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq ttf-mscorefonts-installer || echo "Fontes MS indisponíveis; usando DejaVu."
           mkdir -p ~/.fonts
+          curl -fsSL -o /tmp/selawik.zip \
+            https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip \
+            && unzip -oj /tmp/selawik.zip selawk.ttf selawkb.ttf -d ~/.fonts \
+            || echo "Selawik indisponível; usando Arial."
           curl -fsSL -o ~/.fonts/NewsCycle-Bold.ttf \
             https://raw.githubusercontent.com/google/fonts/main/ofl/newscycle/NewsCycle-Bold.ttf \
             || echo "News Cycle indisponível; usando Arial Bold."
@@ -46,15 +51,26 @@ jobs:
 
       - name: Salvar o roteiro recebido
         env:
+          ROTEIRO_B64: ${{ github.event.client_payload.roteiro_b64 }}
           ROTEIRO: ${{ github.event.client_payload.roteiro || inputs.roteiro }}
-        run: printf '%s' "$ROTEIRO" > roteiro.json
+        run: |
+          if [ -n "$ROTEIRO_B64" ]; then
+            printf '%s' "$ROTEIRO_B64" | tr -d '\r\n ' | base64 -d > roteiro.json
+          else
+            printf '%s' "$ROTEIRO" > roteiro.json
+          fi
 
       - name: Gerar vídeo ou stories
         env:
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           CATEGORIA: ${{ github.event.client_payload.categoria || inputs.categoria || 'noticia' }}
-        run: python gera-video.py roteiro.json --categoria "$CATEGORIA" --saida saida
+        run: |
+          if [ -n "$FOTO" ] && [ -f "$FOTO" ]; then
+            python gera-video.py roteiro.json --categoria "$CATEGORIA" --saida saida --foto "$FOTO"
+          else
+            python gera-video.py roteiro.json --categoria "$CATEGORIA" --saida saida
+          fi
 
       - name: Publicar como release (o Atalho baixa daqui)
         env:
@@ -79,4 +95,15 @@ jobs:
             curl -s -H "Title: Bom dia, Varejo" -H "Tags: x" -H "Priority: high" \
               -H "Click: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
               -d "Falhou. Toque para ver o erro." "https://ntfy.sh/$NTFY_TOPIC"
+          fi
+
+      - name: Apagar a foto enviada do iPhone
+        if: always() && env.FOTO != ''
+        run: |
+          if [ -f "$FOTO" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git rm -q "$FOTO"
+            git commit -qm "Remove foto usada na capa"
+            git pull -q --rebase && git push -q || echo "Não deu para apagar a foto; apague à mão."
           fi
