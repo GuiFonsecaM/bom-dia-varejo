@@ -816,33 +816,38 @@ def escolher_destino(nome, titulo="Salvar vídeo do Bom dia, Varejo", ext=".mp4"
 def validar_stories(roteiro):
     stories = roteiro.get("stories")
     if not stories:  # aceita também um story único no próprio JSON
-        if roteiro.get("texto_tela") or roteiro.get("texto_apoio"):
+        if roteiro.get("texto_tela") or roteiro.get("texto_apoio") or roteiro.get("topicos"):
             stories = [roteiro]
         else:
             raise SystemExit("O JSON não tem a lista 'stories'.")
     for i, s in enumerate(stories, 1):
-        if not (s.get("texto_tela") or s.get("texto_apoio")):
-            raise SystemExit(f"O story {i} está sem 'texto_tela' e sem 'texto_apoio'.")
+        if not (s.get("texto_tela") or s.get("texto_apoio") or s.get("topicos")):
+            raise SystemExit(f"O story {i} está sem 'texto_tela', 'texto_apoio' e 'topicos'.")
     roteiro["stories"] = stories
     roteiro.setdefault("data", "sem-data")
 
 
 def _logo(tamanho):
-    """Usa logo.png (ao lado do script) se existir; senão desenha um selo simples."""
+    """Logo redondo: usa logo.png (recortado em círculo) se existir; senão um selo "BV"."""
+    escala = 4  # desenha maior e reduz, para a borda do círculo ficar lisa
+    grande = tamanho * escala
+    mascara = Image.new("L", (grande, grande), 0)
+    ImageDraw.Draw(mascara).ellipse([0, 0, grande - 1, grande - 1], fill=255)
     if LOGO_ARQUIVO.exists():
         try:
-            img = Image.open(LOGO_ARQUIVO).convert("RGBA")
-            img.thumbnail((tamanho * 3, tamanho), Image.LANCZOS)
-            return img
+            img = ImageOps.fit(Image.open(LOGO_ARQUIVO).convert("RGBA"), (grande, grande),
+                               Image.LANCZOS)
+            alfa = Image.composite(img.getchannel("A"), Image.new("L", img.size, 0), mascara)
+            img.putalpha(alfa)
+            return img.resize((tamanho, tamanho), Image.LANCZOS)
         except Exception as e:
             print(f"   aviso: logo.png ignorado ({e})")
-    img = Image.new("RGBA", (tamanho, tamanho), (0, 0, 0, 0))
+    img = Image.new("RGBA", (grande, grande), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.rounded_rectangle([0, 0, tamanho - 1, tamanho - 1], radius=int(tamanho * 0.22),
-                        fill=COR_STORY_FUNDO)
-    f = fonte(int(tamanho * 0.46))
-    d.text((tamanho / 2, tamanho / 2), "BV", font=f, fill=COR_STORY_BARRA, anchor="mm")
-    return img
+    d.ellipse([0, 0, grande - 1, grande - 1], fill=COR_STORY_FUNDO)
+    d.text((grande / 2, grande / 2), "BV", font=fonte(int(grande * 0.40)),
+           fill=COR_STORY_BARRA, anchor="mm")
+    return img.resize((tamanho, tamanho), Image.LANCZOS)
 
 
 def _data_br(data):
@@ -853,7 +858,8 @@ def _data_br(data):
 def montar_story(item, roteiro):
     titulo = (item.get("texto_tela") or "").strip()
     apoio = (item.get("texto_apoio") or "").strip()
-    print(f"-> Story: {(titulo or apoio)[:60]}...")
+    topicos = [str(x).strip() for x in (item.get("topicos") or []) if str(x).strip()]
+    print(f"-> Story: {(titulo or apoio or ' '.join(topicos))[:60]}...")
 
     tela = Image.new("RGB", (W, H), COR_STORY_FUNDO)
     d = ImageDraw.Draw(tela)
@@ -873,36 +879,54 @@ def montar_story(item, roteiro):
     rodape_txt = item.get("fonte") or roteiro.get("fonte") or f"Por {NOME_CANAL.title()}"
     data_txt = _data_br(item.get("data") or roteiro.get("data"))
 
+    recuo = 46  # espaço entre a bolinha e o texto do tópico
+
     def bloco(tam_titulo, tam_texto):
-        partes = []  # (linhas, fonte, cor, altura_linha, espaço_depois)
+        # cada linha: (texto, fonte, cor, x, altura_da_linha, bolinha?)
+        linhas, altura = [], 0
+
+        def add(lista, f, cor, alt, depois, x=STORY_MARGEM, bolinha=False):
+            nonlocal altura
+            for n, txt in enumerate(lista):
+                linhas.append((txt, f, cor, x, altura, bolinha and n == 0))
+                altura += alt
+            altura += depois
+
         if titulo:
             ft = fonte(tam_titulo)
-            partes.append((quebrar_linhas(titulo, ft, largura, d), ft, COR_STORY_TITULO,
-                           int(tam_titulo * 1.12), int(tam_texto * 1.2)))
+            add(quebrar_linhas(titulo, ft, largura, d), ft, COR_STORY_TITULO,
+                int(tam_titulo * 1.12), int(tam_texto * 1.2))
         if apoio:
             fa = fonte_regular(tam_texto)
-            partes.append((quebrar_linhas(apoio, fa, largura, d), fa, COR_STORY_TEXTO,
-                           int(tam_texto * 1.38), int(tam_texto * 1.6)))
-        fr = fonte(int(tam_texto * 0.86))
-        partes.append(([rodape_txt], fr, COR_STORY_TEXTO, int(tam_texto * 1.25), 6))
+            add(quebrar_linhas(apoio, fa, largura, d), fa, COR_STORY_TEXTO,
+                int(tam_texto * 1.38), int(tam_texto * 0.8))
+        if topicos:
+            fa = fonte_regular(tam_texto)
+            for tp in topicos:
+                add(quebrar_linhas(tp, fa, largura - recuo, d), fa, COR_STORY_TEXTO,
+                    int(tam_texto * 1.32), int(tam_texto * 0.55),
+                    x=STORY_MARGEM + recuo, bolinha=True)
+        altura += int(tam_texto * 0.6)
+        add([rodape_txt], fonte(int(tam_texto * 0.86)), COR_STORY_TEXTO,
+            int(tam_texto * 1.25), 6)
         if data_txt:
-            fd = fonte_regular(int(tam_texto * 0.78))
-            partes.append(([data_txt], fd, COR_STORY_TEXTO, int(tam_texto * 1.1), 0))
-        altura = sum(len(l) * a + e for l, _, _, a, e in partes)
-        return partes, altura
+            add([data_txt], fonte_regular(int(tam_texto * 0.78)), COR_STORY_TEXTO,
+                int(tam_texto * 1.1), 0)
+        return linhas, altura
 
     tam_t, tam_a = STORY_TITULO, STORY_TEXTO
-    partes, altura = bloco(tam_t, tam_a)
+    linhas, altura = bloco(tam_t, tam_a)
     while topo + altura > limite and tam_t > 60:  # texto longo: diminui até caber
         tam_t, tam_a = tam_t - 4, max(34, tam_a - 1)
-        partes, altura = bloco(tam_t, tam_a)
+        linhas, altura = bloco(tam_t, tam_a)
 
-    y = topo
-    for linhas, f, cor, alt, espaco in partes:
-        for linha in linhas:
-            d.text((STORY_MARGEM, y), linha, font=f, fill=cor)
-            y += alt
-        y += espaco
+    for txt, f, cor, x, y, bolinha in linhas:
+        if bolinha:
+            r = max(6, int(f.size * 0.16))
+            cy = topo + y + f.size * 0.58
+            d.ellipse([STORY_MARGEM + 4, cy - r, STORY_MARGEM + 4 + 2 * r, cy + r],
+                      fill=COR_STORY_TITULO)
+        d.text((x, topo + y), txt, font=f, fill=cor)
     return tela
 
 
