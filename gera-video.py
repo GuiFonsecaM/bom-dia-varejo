@@ -245,15 +245,48 @@ FONTES_SERIFA = [
 ]
 
 
+# Texto do story e nome na barra branca: Georgia regular
 FONTES_REGULAR = [
-    "C:/Windows/Fonts/arial.ttf",
-    "C:/Windows/Fonts/segoeui.ttf",
-    "/System/Library/Fonts/Supplemental/Arial.ttf",
-    "/Library/Fonts/Arial.ttf",
-    "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    "C:/Windows/Fonts/georgia.ttf",
+    "/System/Library/Fonts/Supplemental/Georgia.ttf",
+    "/Library/Fonts/Georgia.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Georgia.ttf",       # servidor Linux
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
 ]
+
+# Títulos, caixa de destaque e selo: News Gothic MT Bold (vem com o Office).
+# No GitHub ela não existe; usa a News Cycle Bold, versão gratuita inspirada nela.
+FAMILIAS_TITULO = [("News Gothic MT", "Bold"), ("News Cycle", "Bold")]
+PASTAS_DE_FONTES = [Path(__file__).resolve().parent / "fontes",
+                    Path("C:/Windows/Fonts"), Path.home() / ".fonts",
+                    Path.home() / ".local/share/fonts", Path.home() / "Library/Fonts",
+                    Path("/Library/Fonts"), Path("/usr/share/fonts")]
+if os.getenv("LOCALAPPDATA"):
+    PASTAS_DE_FONTES.insert(2, Path(os.environ["LOCALAPPDATA"]) / "Microsoft/Windows/Fonts")
+_FONTES_ACHADAS = {}
+
+
+def achar_fonte_por_nome(familia, estilo):
+    """Procura uma fonte instalada pelo nome (ex.: 'News Gothic MT', 'Bold')."""
+    chave = (familia.lower(), estilo.lower())
+    if chave not in _FONTES_ACHADAS:
+        achada = None
+        for pasta in PASTAS_DE_FONTES:
+            if achada or not pasta.is_dir():
+                continue
+            for arq in pasta.rglob("*"):
+                if arq.suffix.lower() not in (".ttf", ".otf"):
+                    continue
+                try:
+                    nome, tipo = ImageFont.truetype(str(arq), 10).getname()
+                except Exception:
+                    continue
+                if (nome or "").lower() == chave[0] and (tipo or "").lower() == chave[1]:
+                    achada = str(arq)
+                    break
+        _FONTES_ACHADAS[chave] = achada
+    return _FONTES_ACHADAS[chave]
 
 
 def fonte_regular(tamanho):
@@ -264,6 +297,11 @@ def fonte_regular(tamanho):
 
 
 def fonte(tamanho, serifa=False):
+    if not serifa:
+        for familia, estilo in FAMILIAS_TITULO:
+            caminho = achar_fonte_por_nome(familia, estilo)
+            if caminho:
+                return ImageFont.truetype(caminho, tamanho)
     for caminho in (FONTES_SERIFA if serifa else []) + FONTES:
         if os.path.exists(caminho):
             return ImageFont.truetype(caminho, tamanho)
