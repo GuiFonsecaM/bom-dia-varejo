@@ -105,6 +105,7 @@ FEED_W, FEED_H = 1080, 1350          # 4:5. Para quadrado, use 1080, 1080
 FEED_MAX = 5
 COR_FEED_FUNDO = (237, 237, 237)     # cinza claro
 COR_FEED_SELO_TEXTO = (90, 90, 90)
+COR_FEED_TEXTO = (17, 17, 17)        # texto do post: preto
 COR_LARANJA_PADRAO = (242, 101, 34)  # usada se não houver logo.png para tirar a cor
 QUALIDADE_JPG = 95
 # ======================================================================
@@ -1090,7 +1091,7 @@ def montar_feed(item, laranja):
                 x += espaco
             for tx, ng in palavra:
                 f = f_neg if ng else f_reg
-                d.text((x, y), tx, font=f, fill=laranja)
+                d.text((x, y), tx, font=f, fill=COR_FEED_TEXTO)
                 x += d.textlength(tx, font=f)
         y += alt_linha
     if fonte_txt:
