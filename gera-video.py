@@ -162,9 +162,89 @@ def posicionais():
 SEM_JANELA = opcao("--saida") is not None   # modo servidor
 
 
+_RTF_DESTINOS = frozenset((
+    "aftncn aftnsep aftnsepc annotation atnauthor atndate atnicn atnid atnparent atnref "
+    "atntime atrfend atrfstart author background bkmkend bkmkstart blipuid buptim category "
+    "colorschememapping colortbl comment company creatim datafield datastore defchp defpap do "
+    "doccomm docvar dptxbxtext ebcend ebcstart expandedcolortbl factoidname falt fchars "
+    "ffdeftext ffentrymcr ffexitmcr ffformat ffhelptext ffl ffname ffstattext field file "
+    "filetbl fldinst fldtype fname fontemb fontfile fonttbl footer footerf footerl footerr "
+    "footnote formfield ftncn ftnsep ftnsepc g generator gridtbl header headerf headerl "
+    "headerr hl hlfr hlinkbase hlloc hlsrc hsv htmltag info keycode keywords latentstyles "
+    "lchars levelnumbers leveltext lfolevel linkval list listlevel listname listoverride "
+    "listoverridetable listpicture liststylename listtable listtext lsdlockedexcept "
+    "mailmerge manager nesttableprops nextfile nonesttables objalias objclass objdata object "
+    "objname objsect objtime oldcprops oldpprops oldsprops oldtprops oleclsid operator "
+    "panose password passwordhash pgp pgptbl picprop pict pn pnseclvl pntext pntxta pntxtb "
+    "printim private propname protend protstart protusertbl pxe result revtbl revtim "
+    "rsidtbl rxe shp shpgrp shpinst shppict shprslt shptxt sn sp staticval stylesheet "
+    "subject sv svb tc template themedata title txe ud upr userprops wgrffmtfilter "
+    "windowcaption writereservation writereservhash xe xform xmlattrname xmlattrvalue "
+    "xmlclose xmlname xmlnstbl xmlopen").split())
+_RTF_ESPECIAIS = {"par": "\n", "sect": "\n\n", "page": "\n\n", "line": "\n", "tab": "\t",
+                  "emdash": "\u2014", "endash": "\u2013", "bullet": "\u2022",
+                  "lquote": "\u2018", "rquote": "\u2019",
+                  "ldblquote": "\u201c", "rdblquote": "\u201d"}
+
+
+def rtf_para_texto(rtf):
+    """Converte RTF (texto com formatação, como o iPhone às vezes copia) em texto puro."""
+    padrao = re.compile(r"\\([a-z]{1,32})(-?\d{1,10})?[ ]?|\\'([0-9a-f]{2})|\\([^a-z])|([{}])|[\r\n]+|(.)",
+                        re.I | re.S)
+    pilha, ignorar, ucskip, pular, saida = [], False, 1, 0, []
+    for m in padrao.finditer(rtf):
+        palavra, arg, hexa, char, chave, letra = m.groups()
+        if chave:
+            pular = 0
+            if chave == "{":
+                pilha.append((ucskip, ignorar))
+            elif pilha:
+                ucskip, ignorar = pilha.pop()
+        elif char:
+            pular = 0
+            if char == "*":
+                ignorar = True
+            elif not ignorar:
+                if char == "~":
+                    saida.append("\u00a0")
+                elif char in "{}\\":
+                    saida.append(char)
+                elif char in "\r\n":
+                    saida.append("\n")
+        elif palavra:
+            pular = 0
+            if palavra in _RTF_DESTINOS:
+                ignorar = True
+            elif ignorar:
+                continue
+            elif palavra in _RTF_ESPECIAIS:
+                saida.append(_RTF_ESPECIAIS[palavra])
+            elif palavra == "uc":
+                ucskip = int(arg or 1)
+            elif palavra == "u":
+                c = int(arg)
+                saida.append(chr(c + 0x10000 if c < 0 else c))
+                pular = ucskip
+        elif hexa:
+            if pular > 0:
+                pular -= 1
+            elif not ignorar:
+                saida.append(bytes([int(hexa, 16)]).decode("cp1252", errors="replace"))
+        elif letra:
+            if pular > 0:
+                pular -= 1
+            elif not ignorar:
+                saida.append(letra)
+    texto = "".join(saida)
+    return texto.encode("utf-16", "surrogatepass").decode("utf-16", errors="replace")
+
+
 def carregar_json(texto):
     """Lê o JSON tolerando aspas "inteligentes" (“ ” ‘ ’) que o iPhone às vezes
     coloca. Se mesmo assim falhar, mostra o começo do texto recebido no log."""
+    if texto.lstrip().startswith("{\\rtf"):
+        print("Aviso: o JSON veio com formatação (RTF); convertendo para texto puro.")
+        texto = rtf_para_texto(texto).strip()
     try:
         return json.loads(texto)
     except json.JSONDecodeError as erro:
