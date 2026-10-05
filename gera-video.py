@@ -135,7 +135,7 @@ SESSAO.mount("https://", requests.adapters.HTTPAdapter(max_retries=requests.adap
 
 
 # ------------------------------ ENTRADA -------------------------------
-OPCOES_COM_VALOR = ("--categoria", "--saida")
+OPCOES_COM_VALOR = ("--categoria", "--saida", "--foto")
 
 
 def opcao(nome):
@@ -1120,6 +1120,33 @@ def _selo_feed(tela, d, laranja):
     return y0 + alt_selo
 
 
+def baixar_imagem_url(url, pasta):
+    """Baixa a imagem de um link. Aceita link direto da imagem, caminho de arquivo
+    local, ou link de página (usa a imagem de compartilhamento og:image)."""
+    url = str(url).strip()
+    if os.path.exists(url):
+        return "foto", Path(url)
+    try:
+        r = SESSAO.get(url, timeout=30)
+        r.raise_for_status()
+        tipo = r.headers.get("Content-Type", "")
+        if "html" in tipo:
+            m = (re.search(r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)', r.text)
+                 or re.search(r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image', r.text))
+            if not m:
+                raise ValueError("a página não tem imagem de compartilhamento (og:image)")
+            r = SESSAO.get(requests.compat.urljoin(url, m.group(1).replace("&amp;", "&")), timeout=30)
+            r.raise_for_status()
+        destino = pasta / f"capa_{random.randint(0, 10**9)}.img"
+        destino.write_bytes(r.content)
+        Image.open(destino).verify()  # garante que é mesmo uma imagem
+        print("   imagem: link do JSON")
+        return "foto", destino
+    except Exception as e:
+        print(f"   aviso: não deu para usar a imagem do link ({e}); buscando outra...")
+        return None
+
+
 def montar_capa(item, laranja, midia):
     """1ª imagem do carrossel: foto, degradê preto embaixo, manchete branca com
     trechos **em laranja**, subtítulo e 'arraste para o lado'."""
@@ -1275,7 +1302,11 @@ def gerar_feed(roteiro):
     figuras = []
     if capa:
         midia = None
-        if capa.get("busca_imagem"):
+        if opcao("--foto"):  # foto escolhida no iPhone tem prioridade sobre o link
+            capa["imagem_url"] = opcao("--foto")
+        if capa.get("imagem_url"):
+            midia = baixar_imagem_url(capa["imagem_url"], pasta_tmp)
+        if not midia and capa.get("busca_imagem"):
             midia = buscar_midia(capa["busca_imagem"], set(), pasta_tmp, so_fotos=True)
         figuras.append(montar_capa(capa, laranja, midia))
     figuras += [montar_feed(item, laranja) for item in imagens]
