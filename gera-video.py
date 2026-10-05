@@ -7,6 +7,7 @@ Como usar:
   python gera-video.py                  -> cole o JSON no terminal
   python gera-video.py roteiro.json     -> lê o JSON de um arquivo
   python gera-video.py --story          -> força o modo stories (imagens)
+  python gera-video.py --feed           -> força o modo feed (até 5 imagens)
   python gera-video.py --testar-vozes   -> gera amostras de todas as vozes pt-BR
 
 Modo servidor (GitHub Actions), sem janelas nem perguntas:
@@ -99,6 +100,12 @@ COR_STORY_BARRA = (255, 255, 255)
 COR_STORY_TITULO = (255, 255, 255)
 COR_STORY_TEXTO = (175, 175, 175)
 LOGO_ARQUIVO = Path(__file__).resolve().parent / "logo.png"   # opcional
+# Feed (post do Instagram, até 5 imagens em carrossel)
+FEED_W, FEED_H = 1080, 1350          # 4:5. Para quadrado, use 1080, 1080
+FEED_MAX = 5
+COR_FEED_FUNDO = (237, 237, 237)     # cinza claro
+COR_FEED_SELO_TEXTO = (90, 90, 90)
+COR_LARANJA_PADRAO = (242, 101, 34)  # usada se não houver logo.png para tirar a cor
 QUALIDADE_JPG = 95
 # ======================================================================
 
@@ -258,7 +265,7 @@ FONTES_REGULAR = [
 # Só os títulos (título do story e caixa de destaque do vídeo):
 # News Gothic MT Bold (vem com o Office).
 # No GitHub ela não existe; usa a News Cycle Bold, versão gratuita inspirada nela.
-FAMILIAS_TITULO = [("News Gothic MT", "Bold"), ("News Cycle", "Bold")]
+FAMILIAS_TITULO = []  # vazio = Arial Bold. Ex.: [("News Gothic MT", "Bold")]
 PASTAS_DE_FONTES = [Path(__file__).resolve().parent / "fontes",
                     Path("C:/Windows/Fonts"), Path.home() / ".fonts",
                     Path.home() / ".local/share/fonts", Path.home() / "Library/Fonts",
@@ -869,7 +876,7 @@ def validar_stories(roteiro):
     roteiro.setdefault("data", "sem-data")
 
 
-def _logo(tamanho):
+def _logo(tamanho, cor_fundo=COR_STORY_FUNDO):
     """Logo redondo: usa logo.png (recortado em círculo) se existir; senão um selo "BV"."""
     escala = 4  # desenha maior e reduz, para a borda do círculo ficar lisa
     grande = tamanho * escala
@@ -886,7 +893,7 @@ def _logo(tamanho):
             print(f"   aviso: logo.png ignorado ({e})")
     img = Image.new("RGBA", (grande, grande), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
-    d.ellipse([0, 0, grande - 1, grande - 1], fill=COR_STORY_FUNDO)
+    d.ellipse([0, 0, grande - 1, grande - 1], fill=cor_fundo)
     d.text((grande / 2, grande / 2), "BV", font=fonte(int(grande * 0.40)),
            fill=COR_STORY_BARRA, anchor="mm")
     return img.resize((tamanho, tamanho), Image.LANCZOS)
@@ -972,6 +979,154 @@ def montar_story(item, roteiro):
     return tela
 
 
+# -------------------------------- FEED --------------------------------
+def cor_laranja():
+    """Tira o laranja do logo.png; sem logo, usa COR_LARANJA_PADRAO."""
+    import colorsys
+    if LOGO_ARQUIVO.exists():
+        try:
+            img = Image.open(LOGO_ARQUIVO).convert("RGBA").resize((80, 80))
+            soma, n = [0, 0, 0], 0
+            for r, g, b, a in img.getdata():
+                if a < 128:
+                    continue
+                h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+                if s > 0.45 and v > 0.45 and 0.02 <= h <= 0.13:
+                    soma = [soma[0] + r, soma[1] + g, soma[2] + b]
+                    n += 1
+            if n > 30:
+                return tuple(c // n for c in soma)
+        except Exception as e:
+            print(f"   aviso: não deu para ler a cor do logo ({e})")
+    return COR_LARANJA_PADRAO
+
+
+def _palavras(paragrafo):
+    """Quebra o texto em palavras; **assim** vira negrito. Cada palavra é uma
+    lista de pedaços (texto, negrito), para pontuação colar no negrito."""
+    palavras, nova = [], True
+    for parte in re.split(r"(\*\*.+?\*\*)", paragrafo):
+        if not parte:
+            continue
+        negrito = len(parte) > 4 and parte.startswith("**") and parte.endswith("**")
+        txt = parte[2:-2] if negrito else parte
+        for i, pedaco in enumerate(txt.split(" ")):
+            if i > 0:
+                nova = True
+            if not pedaco:
+                continue
+            if nova or not palavras:
+                palavras.append([(pedaco, negrito)])
+            else:
+                palavras[-1].append((pedaco, negrito))
+            nova = False
+        if txt.endswith(" "):
+            nova = True
+    return palavras
+
+
+def _linhas_ricas(texto, f_reg, f_neg, largura, d):
+    def larg(palavra):
+        return sum(d.textlength(tx, font=f_neg if ng else f_reg) for tx, ng in palavra)
+    espaco = d.textlength(" ", font=f_reg)
+    linhas = []
+    for paragrafo in texto.split("\n"):
+        atual, w = [], 0
+        for palavra in _palavras(paragrafo.strip()):
+            lp = larg(palavra)
+            if atual and w + espaco + lp > largura:
+                linhas.append(atual)
+                atual, w = [], 0
+            w += (espaco if atual else 0) + lp
+            atual.append(palavra)
+        linhas.append(atual)
+    return linhas, espaco
+
+
+def montar_feed(item, laranja):
+    texto = (item.get("texto") or item.get("texto_tela") or "").strip()
+    print(f"-> Feed: {texto[:60]}...")
+    tela = Image.new("RGB", (FEED_W, FEED_H), COR_FEED_FUNDO)
+    d = ImageDraw.Draw(tela)
+
+    # Selo no canto superior direito: logo redondo + nome, com contorno arredondado
+    alt_selo, margem = 118, 64
+    logo = _logo(alt_selo - 26, cor_fundo=laranja)
+    f1 = fonte(30)
+    nome1, nome2 = "Bom dia,", "Varejo"
+    larg_txt = max(d.textlength(nome1, font=f1), d.textlength(nome2, font=f1))
+    larg_selo = 13 + logo.width + 18 + int(larg_txt) + 30
+    x0, y0 = FEED_W - margem - larg_selo, margem
+    d.rounded_rectangle([x0, y0, x0 + larg_selo, y0 + alt_selo], radius=alt_selo // 2,
+                        outline=(205, 205, 205), width=3)
+    tela.paste(logo, (x0 + 13, y0 + 13), logo)
+    xt = x0 + 13 + logo.width + 18
+    d.text((xt, y0 + alt_selo / 2 - 4), nome1, font=f1, fill=COR_FEED_SELO_TEXTO, anchor="ls")
+    d.text((xt, y0 + alt_selo / 2 + 4), nome2, font=f1, fill=COR_FEED_SELO_TEXTO, anchor="lt")
+
+    # Barra laranja no canto inferior esquerdo, com a ponta inclinada
+    alt_barra, larg_barra = 92, int(FEED_W * 0.56)
+    d.polygon([(0, FEED_H - alt_barra), (larg_barra, FEED_H - alt_barra),
+               (larg_barra + alt_barra, FEED_H), (0, FEED_H)], fill=laranja)
+
+    # Texto laranja, alinhado à esquerda e centralizado na altura
+    x_txt, larg = 120, FEED_W - 120 - 100
+    topo, base = y0 + alt_selo + 70, FEED_H - alt_barra - 90
+    fonte_txt = (item.get("fonte") or "").strip()
+    tam = 70
+    while True:
+        f_reg, f_neg = fonte_regular(tam), fonte(tam)
+        linhas, espaco = _linhas_ricas(texto, f_reg, f_neg, larg, d)
+        alt_linha = int(tam * 1.24)
+        altura = len(linhas) * alt_linha + (int(tam * 1.4) if fonte_txt else 0)
+        if altura <= base - topo or tam <= 38:
+            break
+        tam -= 2
+    y = topo + (base - topo - altura) // 2
+    for linha in linhas:
+        x = x_txt
+        for n, palavra in enumerate(linha):
+            if n:
+                x += espaco
+            for tx, ng in palavra:
+                f = f_neg if ng else f_reg
+                d.text((x, y), tx, font=f, fill=laranja)
+                x += d.textlength(tx, font=f)
+        y += alt_linha
+    if fonte_txt:
+        d.text((x_txt, y + int(tam * 0.5)), fonte_txt, font=fonte_regular(int(tam * 0.45)),
+               fill=(130, 130, 130))
+    return tela
+
+
+def gerar_feed(roteiro):
+    imagens = roteiro.get("imagens") or [roteiro]
+    imagens = [i for i in imagens if (i.get("texto") or i.get("texto_tela"))]
+    if not imagens:
+        raise SystemExit("O JSON do feed não tem 'texto' em nenhuma imagem.")
+    if len(imagens) > FEED_MAX:
+        print(f"Aviso: o feed aceita até {FEED_MAX} imagens; o resto foi ignorado.")
+        imagens = imagens[:FEED_MAX]
+    roteiro.setdefault("data", "sem-data")
+    categoria = escolher_categoria(roteiro.get("categoria"))
+    saida = escolher_destino(f"{roteiro['data']}_feed_{categoria}.jpg",
+                             titulo="Salvar post do feed do Bom dia, Varejo", ext=".jpg",
+                             tipos=(("Imagem JPG", "*.jpg"), ("Imagem PNG", "*.png")),
+                             pasta=PASTA_INICIAL_STORIES)
+    laranja = cor_laranja()
+    salvos = []
+    for i, item in enumerate(imagens, 1):
+        img = montar_feed(item, laranja)
+        destino = saida if len(imagens) == 1 else caminho_livre(
+            saida.with_name(f"{saida.stem}_{i:02d}{saida.suffix}"))
+        if destino.suffix.lower() == ".png":
+            img.save(destino)
+        else:
+            img.save(destino, "JPEG", quality=QUALIDADE_JPG, optimize=True)
+        salvos.append(destino)
+    print("\nPronto! " + "\n        ".join(str(s) for s in salvos))
+
+
 def gerar_stories(roteiro):
     validar_stories(roteiro)
     stories = roteiro["stories"]
@@ -1016,6 +1171,9 @@ def main():
         testar_vozes()
         return
     roteiro = ler_roteiro()
+    if "--feed" in sys.argv or roteiro.get("formato") == "feed" or "imagens" in roteiro:
+        gerar_feed(roteiro)
+        return
     if ("--story" in sys.argv or roteiro.get("formato") == "story"
             or "stories" in roteiro):
         gerar_stories(roteiro)
