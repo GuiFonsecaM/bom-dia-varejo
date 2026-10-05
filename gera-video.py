@@ -245,17 +245,18 @@ FONTES_SERIFA = [
 ]
 
 
-# Texto do story e nome na barra branca: Georgia regular
 FONTES_REGULAR = [
-    "C:/Windows/Fonts/georgia.ttf",
-    "/System/Library/Fonts/Supplemental/Georgia.ttf",
-    "/Library/Fonts/Georgia.ttf",
-    "/usr/share/fonts/truetype/msttcorefonts/Georgia.ttf",       # servidor Linux
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
-    "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
 ]
 
-# Títulos, caixa de destaque e selo: News Gothic MT Bold (vem com o Office).
+# Só os títulos (título do story e caixa de destaque do vídeo):
+# News Gothic MT Bold (vem com o Office).
 # No GitHub ela não existe; usa a News Cycle Bold, versão gratuita inspirada nela.
 FAMILIAS_TITULO = [("News Gothic MT", "Bold"), ("News Cycle", "Bold")]
 PASTAS_DE_FONTES = [Path(__file__).resolve().parent / "fontes",
@@ -296,12 +297,15 @@ def fonte_regular(tamanho):
     return fonte(tamanho)
 
 
+def fonte_titulo(tamanho):
+    for familia, estilo in FAMILIAS_TITULO:
+        caminho = achar_fonte_por_nome(familia, estilo)
+        if caminho:
+            return ImageFont.truetype(caminho, tamanho)
+    return fonte(tamanho)
+
+
 def fonte(tamanho, serifa=False):
-    if not serifa:
-        for familia, estilo in FAMILIAS_TITULO:
-            caminho = achar_fonte_por_nome(familia, estilo)
-            if caminho:
-                return ImageFont.truetype(caminho, tamanho)
     for caminho in (FONTES_SERIFA if serifa else []) + FONTES:
         if os.path.exists(caminho):
             return ImageFont.truetype(caminho, tamanho)
@@ -322,9 +326,9 @@ def quebrar_linhas(texto, font, largura_max, draw):
     return linhas
 
 
-def imagem_texto(texto, tamanho, cor=(255, 255, 255), fundo=None, serifa=False,
+def imagem_texto(texto, tamanho, cor=(255, 255, 255), fundo=None, serifa=False, titulo=False,
                  largura_max=W - 160, contorno=6, margem=28):
-    font = fonte(tamanho, serifa)
+    font = fonte_titulo(tamanho) if titulo else fonte(tamanho, serifa)
     rascunho = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     linhas = quebrar_linhas(texto, font, largura_max - 2 * margem, rascunho)
     ascendente, descendente = font.getmetrics()
@@ -769,7 +773,7 @@ def montar_cena(i, cena, roteiro, pasta, usados, img_marca):
         camadas.append(clip_imagem(img_fonte, duracao, ("center", Y_FONTE)))
 
     if cena.get("texto_tela"):
-        img_destaque = imagem_texto(cena["texto_tela"].upper(), 92, cor=COR_TEXTO_DESTAQUE,
+        img_destaque = imagem_texto(cena["texto_tela"].upper(), 92, cor=COR_TEXTO_DESTAQUE, titulo=True,
                                     fundo=COR_DESTAQUE + (240,), largura_max=W - 140)
         camadas.append(clip_imagem(img_destaque, duracao, ("center", Y_DESTAQUE)))
 
@@ -931,7 +935,7 @@ def montar_story(item, roteiro):
             altura += depois
 
         if titulo:
-            ft = fonte(tam_titulo)
+            ft = fonte_titulo(tam_titulo)
             add(quebrar_linhas(titulo, ft, largura, d), ft, COR_STORY_TITULO,
                 int(tam_titulo * 1.12), int(tam_texto * 1.2))
         if apoio:
