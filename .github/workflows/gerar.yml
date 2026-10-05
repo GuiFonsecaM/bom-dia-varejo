@@ -36,6 +36,10 @@ jobs:
           echo "ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula select true" | sudo debconf-set-selections
           sudo apt-get update -qq
           sudo apt-get install -y -qq ttf-mscorefonts-installer || echo "Fontes MS indisponíveis; usando DejaVu."
+          mkdir -p ~/.fonts
+          curl -fsSL -o ~/.fonts/NewsCycle-Bold.ttf \
+            https://raw.githubusercontent.com/google/fonts/main/ofl/newscycle/NewsCycle-Bold.ttf \
+            || echo "News Cycle indisponível; usando Arial Bold."
 
       - name: Instalar dependências
         run: pip install -r requirements.txt
