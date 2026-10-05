@@ -1064,6 +1064,8 @@ def _linhas_ricas(texto, f_reg, f_neg, largura, d):
     def larg(palavra):
         return sum(d.textlength(tx, font=f_neg if ng else f_reg) for tx, ng in palavra)
     espaco = d.textlength(" ", font=f_reg)
+    # não separa "2º turno", "1ª vez" etc. em linhas diferentes
+    texto = re.sub(r"(\d+[ºª°])\s+", "\\1\u00a0", texto)
     linhas = []
     for paragrafo in texto.split("\n"):
         atual, w = [], 0
@@ -1130,12 +1132,14 @@ def montar_capa(item, laranja, midia):
         fundo = Image.new("RGB", (FEED_W, FEED_H), (45, 45, 45))
     tela = fundo.convert("RGBA")
 
-    # Degradê: transparente até ~35% da altura, quase preto no rodapé
+    # Degradê suave: começa em ~25% da altura sem "degrau" visível
+    # (curva smoothstep) e chega quase a preto atrás do texto
     grad = Image.new("L", (1, FEED_H))
-    ini_g = int(FEED_H * 0.35)
+    ini_g, fim_g = FEED_H * 0.25, FEED_H * 0.92
     for y in range(FEED_H):
-        p = max(0.0, (y - ini_g) / (FEED_H - ini_g))
-        grad.putpixel((0, y), int(250 * min(1.0, p ** 0.8 * 1.15)))
+        p = min(1.0, max(0.0, (y - ini_g) / (fim_g - ini_g)))
+        suave = p * p * p * (p * (p * 6 - 15) + 10)   # smootherstep
+        grad.putpixel((0, y), int(245 * suave))
     sombra = Image.new("RGBA", (FEED_W, FEED_H), (0, 0, 0, 255))
     sombra.putalpha(grad.resize((FEED_W, FEED_H)))
     tela.alpha_composite(sombra)
