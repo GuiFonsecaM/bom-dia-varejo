@@ -29,7 +29,8 @@ Banco de imagens (grátis): Pixabay -> https://pixabay.com/api/docs/
 
 Resultado: uma janela do Explorador abre para você escolher onde salvar.
   Vídeo:   [data]_bom-dia-varejo_[noticia|curiosidade].mp4  + _legendas.txt
-  Stories: [data]_story_[noticia|curiosidade].jpg  (ou _01, _02... se forem vários)
+  Stories: [data]_story_[noticia|curiosidade].jpg  (uma imagem por JSON)
+           Coloque um logo.png ao lado do script para usar seu logo na barra branca.
 """
 
 import asyncio
@@ -86,8 +87,18 @@ MIN_PALAVRAS_CENA = 8                # cenas menores são juntadas à seguinte
 TRANSICAO = 0.3                      # segundos de fusão suave entre as cenas
 # Stories (imagem estática)
 PASTA_INICIAL_STORIES = Path.home() / "Pictures"
-TAMANHO_APOIO_STORY = 58             # texto de apoio (serifa, como a legenda do vídeo)
-Y_RODAPE_STORY = H - 400             # chamada final, acima da barra de resposta
+# Visual do story (estilo manchete de portal): barra branca + fundo preto
+STORY_TOPO_LIVRE = 230               # faixa preta no topo: indicadores e perfil do Instagram
+STORY_ALT_BARRA = 170                # altura da barra branca
+STORY_BASE_LIVRE = 300               # faixa livre embaixo: campo de resposta
+STORY_MARGEM = 72                    # margem lateral do texto
+STORY_TITULO = 104                   # tamanho máximo do título (diminui sozinho se faltar espaço)
+STORY_TEXTO = 46                     # tamanho do texto de apoio
+COR_STORY_FUNDO = (0, 0, 0)
+COR_STORY_BARRA = (255, 255, 255)
+COR_STORY_TITULO = (255, 255, 255)
+COR_STORY_TEXTO = (175, 175, 175)
+LOGO_ARQUIVO = Path(__file__).resolve().parent / "logo.png"   # opcional
 QUALIDADE_JPG = 95
 # ======================================================================
 
@@ -232,6 +243,24 @@ FONTES_SERIFA = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
 ]
+
+
+FONTES_REGULAR = [
+    "C:/Windows/Fonts/arial.ttf",
+    "C:/Windows/Fonts/segoeui.ttf",
+    "/System/Library/Fonts/Supplemental/Arial.ttf",
+    "/Library/Fonts/Arial.ttf",
+    "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+]
+
+
+def fonte_regular(tamanho):
+    for caminho in FONTES_REGULAR:
+        if os.path.exists(caminho):
+            return ImageFont.truetype(caminho, tamanho)
+    return fonte(tamanho)
 
 
 def fonte(tamanho, serifa=False):
@@ -798,87 +827,101 @@ def validar_stories(roteiro):
     roteiro.setdefault("data", "sem-data")
 
 
-def fundo_story(midia):
-    if midia:
+def _logo(tamanho):
+    """Usa logo.png (ao lado do script) se existir; senão desenha um selo simples."""
+    if LOGO_ARQUIVO.exists():
         try:
-            if midia[0] == "foto":
-                img = Image.open(midia[1]).convert("RGB")
-            else:  # segurança: usa um quadro do vídeo
-                clip = VideoFileClip(str(midia[1]), audio=False)
-                img = Image.fromarray(clip.get_frame(min(1.0, clip.duration / 2)))
-                clip.close()
-            return ImageOps.fit(img, (W, H), Image.LANCZOS)
+            img = Image.open(LOGO_ARQUIVO).convert("RGBA")
+            img.thumbnail((tamanho * 3, tamanho), Image.LANCZOS)
+            return img
         except Exception as e:
-            print(f"   aviso: imagem ignorada ({e})")
-    return Image.new("RGB", (W, H), COR_MARCA)
+            print(f"   aviso: logo.png ignorado ({e})")
+    img = Image.new("RGBA", (tamanho, tamanho), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle([0, 0, tamanho - 1, tamanho - 1], radius=int(tamanho * 0.22),
+                        fill=COR_STORY_FUNDO)
+    f = fonte(int(tamanho * 0.46))
+    d.text((tamanho / 2, tamanho / 2), "BV", font=f, fill=COR_STORY_BARRA, anchor="mm")
+    return img
 
 
-def montar_story(i, item, roteiro, pasta, usados, img_marca):
-    titulo = item.get("texto_tela") or item.get("texto_apoio")
-    print(f"-> Story {i}: {titulo[:60]}...")
-    midia = buscar_midia(item.get("busca_imagem"), usados, pasta, so_fotos=True)
+def _data_br(data):
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(data or ""))
+    return f"{m[3]}/{m[2]}/{m[1]}" if m else str(data or "")
 
-    tela = fundo_story(midia).convert("RGBA")
-    tela.alpha_composite(Image.new("RGBA", (W, H), (0, 0, 0, int(255 * 0.38))))
 
-    def colar(img, y):
-        tela.alpha_composite(img, ((W - img.width) // 2, int(y)))
+def montar_story(item, roteiro):
+    titulo = (item.get("texto_tela") or "").strip()
+    apoio = (item.get("texto_apoio") or "").strip()
+    print(f"-> Story: {(titulo or apoio)[:60]}...")
 
-    colar(img_marca, Y_MARCA)
-    fonte_txt = item.get("fonte") or roteiro.get("fonte")
-    if fonte_txt:
-        colar(imagem_texto(fonte_txt, 34, cor=(230, 230, 230), contorno=3, margem=10), Y_FONTE)
+    tela = Image.new("RGB", (W, H), COR_STORY_FUNDO)
+    d = ImageDraw.Draw(tela)
 
-    y_livre = Y_DESTAQUE
-    if item.get("texto_tela"):
-        img = imagem_texto(item["texto_tela"].upper(), 92, cor=COR_TEXTO_DESTAQUE,
-                           fundo=COR_DESTAQUE + (240,), largura_max=W - 140)
-        colar(img, Y_DESTAQUE)
-        y_livre = Y_DESTAQUE + img.height + 60
+    # Barra branca abaixo da área dos indicadores do stories
+    y0, y1 = STORY_TOPO_LIVRE, STORY_TOPO_LIVRE + STORY_ALT_BARRA
+    d.rectangle([0, y0, W, y1], fill=COR_STORY_BARRA)
+    logo = _logo(int(STORY_ALT_BARRA * 0.62))
+    tela.paste(logo, (STORY_MARGEM - 12, y0 + (STORY_ALT_BARRA - logo.height) // 2), logo)
+    d.text((W / 2, (y0 + y1) / 2), NOME_CANAL, font=fonte_regular(62),
+           fill=COR_STORY_FUNDO, anchor="mm")
 
-    if item.get("texto_apoio"):
-        img = imagem_texto(item["texto_apoio"], TAMANHO_APOIO_STORY, serifa=True, contorno=4)
-        y_apoio = max(int(H * 0.64), y_livre)
-        colar(img, y_apoio)
-        y_livre = y_apoio + img.height + 40
+    # Texto da notícia, alinhado à esquerda como manchete de portal
+    largura = W - 2 * STORY_MARGEM
+    topo = y1 + 110
+    limite = H - STORY_BASE_LIVRE
+    rodape_txt = item.get("fonte") or roteiro.get("fonte") or f"Por {NOME_CANAL.title()}"
+    data_txt = _data_br(item.get("data") or roteiro.get("data"))
 
-    rodape = item.get("rodape") or roteiro.get("rodape")
-    if rodape:
-        colar(imagem_texto(rodape, 38, cor=COR_TEXTO_MARCA, fundo=COR_MARCA + (230,),
-                           margem=16), max(Y_RODAPE_STORY, y_livre))
-    return tela.convert("RGB")
+    def bloco(tam_titulo, tam_texto):
+        partes = []  # (linhas, fonte, cor, altura_linha, espaço_depois)
+        if titulo:
+            ft = fonte(tam_titulo)
+            partes.append((quebrar_linhas(titulo, ft, largura, d), ft, COR_STORY_TITULO,
+                           int(tam_titulo * 1.12), int(tam_texto * 1.2)))
+        if apoio:
+            fa = fonte_regular(tam_texto)
+            partes.append((quebrar_linhas(apoio, fa, largura, d), fa, COR_STORY_TEXTO,
+                           int(tam_texto * 1.38), int(tam_texto * 1.6)))
+        fr = fonte(int(tam_texto * 0.86))
+        partes.append(([rodape_txt], fr, COR_STORY_TEXTO, int(tam_texto * 1.25), 6))
+        if data_txt:
+            fd = fonte_regular(int(tam_texto * 0.78))
+            partes.append(([data_txt], fd, COR_STORY_TEXTO, int(tam_texto * 1.1), 0))
+        altura = sum(len(l) * a + e for l, _, _, a, e in partes)
+        return partes, altura
+
+    tam_t, tam_a = STORY_TITULO, STORY_TEXTO
+    partes, altura = bloco(tam_t, tam_a)
+    while topo + altura > limite and tam_t > 60:  # texto longo: diminui até caber
+        tam_t, tam_a = tam_t - 4, max(34, tam_a - 1)
+        partes, altura = bloco(tam_t, tam_a)
+
+    y = topo
+    for linhas, f, cor, alt, espaco in partes:
+        for linha in linhas:
+            d.text((STORY_MARGEM, y), linha, font=f, fill=cor)
+            y += alt
+        y += espaco
+    return tela
 
 
 def gerar_stories(roteiro):
     validar_stories(roteiro)
-    categoria = escolher_categoria(roteiro.get("categoria"))
     stories = roteiro["stories"]
+    if len(stories) > 1:
+        print(f"Aviso: o JSON tem {len(stories)} stories; só o primeiro é gerado.")
+    categoria = escolher_categoria(roteiro.get("categoria"))
     saida = escolher_destino(f"{roteiro['data']}_story_{categoria}.jpg",
                              titulo="Salvar story do Bom dia, Varejo", ext=".jpg",
                              tipos=(("Imagem JPG", "*.jpg"), ("Imagem PNG", "*.png")),
                              pasta=PASTA_INICIAL_STORIES)
-    pasta_tmp = Path(tempfile.mkdtemp(prefix="bom_dia_varejo_story_"))
-    if not (tem_chave(PIXABAY_API_KEY) or tem_chave(PEXELS_API_KEY)):
-        print("Aviso: sem chave do Pixabay, os stories terão fundo liso.\n")
-
-    img_marca = imagem_texto(NOME_CANAL, 44, cor=COR_TEXTO_MARCA,
-                             fundo=COR_MARCA + (230,), margem=18)
-    usados, salvos = set(), []
-    for i, item in enumerate(stories, 1):
-        img = montar_story(i, item, roteiro, pasta_tmp, usados, img_marca)
-        if len(stories) == 1:
-            destino = saida
-        else:
-            destino = caminho_livre(saida.with_name(f"{saida.stem}_{i:02d}{saida.suffix}"))
-        if destino.suffix.lower() == ".png":
-            img.save(destino)
-        else:
-            img.save(destino, "JPEG", quality=QUALIDADE_JPG, optimize=True)
-        salvos.append(destino)
-
-    if APAGAR_TEMPORARIOS:
-        shutil.rmtree(pasta_tmp, ignore_errors=True)
-    print("\nPronto! " + "\n        ".join(str(s) for s in salvos))
+    img = montar_story(stories[0], roteiro)
+    if saida.suffix.lower() == ".png":
+        img.save(saida)
+    else:
+        img.save(saida, "JPEG", quality=QUALIDADE_JPG, optimize=True)
+    print(f"\nPronto! {saida}")
 
 
 def testar_vozes():
