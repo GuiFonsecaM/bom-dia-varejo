@@ -110,9 +110,16 @@ COR_LARANJA_PADRAO = (242, 101, 34)  # usada se não houver logo.png para tirar 
 QUALIDADE_JPG = 95
 # ======================================================================
 
+_HOME_FONTES = str(Path.home() / ".fonts")
+_PASTA_FONTES = str(Path(__file__).resolve().parent / "fontes")
+# Textos em Segoe UI (Windows). No GitHub, usa a Selawik, versão aberta da
+# própria Microsoft com as mesmas medidas da Segoe UI.
 FONTES = [
-    "C:/Windows/Fonts/arialbd.ttf",
     "C:/Windows/Fonts/segoeuib.ttf",
+    f"{_PASTA_FONTES}/segoeuib.ttf",
+    f"{_HOME_FONTES}/selawkb.ttf",
+    f"{_PASTA_FONTES}/selawkb.ttf",
+    "C:/Windows/Fonts/arialbd.ttf",
     "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
     "/Library/Fonts/Arial Bold.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Arial_Bold.ttf",   # servidor Linux
@@ -254,8 +261,11 @@ FONTES_SERIFA = [
 
 
 FONTES_REGULAR = [
-    "C:/Windows/Fonts/arial.ttf",
     "C:/Windows/Fonts/segoeui.ttf",
+    f"{_PASTA_FONTES}/segoeui.ttf",
+    f"{_HOME_FONTES}/selawk.ttf",
+    f"{_PASTA_FONTES}/selawk.ttf",
+    "C:/Windows/Fonts/arial.ttf",
     "/System/Library/Fonts/Supplemental/Arial.ttf",
     "/Library/Fonts/Arial.ttf",
     "/usr/share/fonts/truetype/msttcorefonts/Arial.ttf",
@@ -296,6 +306,30 @@ def achar_fonte_por_nome(familia, estilo):
                     break
         _FONTES_ACHADAS[chave] = achada
     return _FONTES_ACHADAS[chave]
+
+
+def _troca_glifos(texto, font):
+    """A Selawik (Segoe UI do GitHub) não tem º nem ª: troca por ° e a."""
+    caminho = os.path.basename(str(getattr(font, "path", "") or "")).lower()
+    if isinstance(texto, str) and caminho.startswith("selawk"):
+        return texto.replace("º", "°").replace("ª", "a")
+    return texto
+
+
+_texto_original = ImageDraw.ImageDraw.text
+_largura_original = ImageDraw.ImageDraw.textlength
+
+
+def _text(self, xy, text, *args, font=None, **kwargs):
+    return _texto_original(self, xy, _troca_glifos(text, font), *args, font=font, **kwargs)
+
+
+def _textlength(self, text, font=None, *args, **kwargs):
+    return _largura_original(self, _troca_glifos(text, font), font, *args, **kwargs)
+
+
+ImageDraw.ImageDraw.text = _text
+ImageDraw.ImageDraw.textlength = _textlength
 
 
 def fonte_regular(tamanho):
