@@ -21,10 +21,12 @@ jobs:
   gerar:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    env:
+      NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -61,3 +63,16 @@ jobs:
           if [ ${#notas[@]} -gt 0 ]; then cat "${notas[@]}" > notas.txt; else : > notas.txt; fi
           TAG="bdv-$(date +%Y%m%d-%H%M%S)-${GITHUB_RUN_ID}"
           gh release create "$TAG" "${arquivos[@]}" --title "$(basename "${arquivos[0]%.*}")" --notes-file notas.txt
+
+      - name: Avisar no iPhone (ntfy)
+        if: always() && env.NTFY_TOPIC != ''
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            curl -s -H "Title: Bom dia, Varejo" -H "Tags: white_check_mark" \
+              -H "Click: shortcuts://run-shortcut?name=Baixar%20Bom%20Dia%2C%20Varejo" \
+              -d "Pronto! Toque aqui para baixar." "https://ntfy.sh/$NTFY_TOPIC"
+          else
+            curl -s -H "Title: Bom dia, Varejo" -H "Tags: x" -H "Priority: high" \
+              -H "Click: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              -d "Falhou. Toque para ver o erro." "https://ntfy.sh/$NTFY_TOPIC"
+          fi
