@@ -69,7 +69,7 @@ def _chave_local(nome_arquivo):
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY") or _chave_local("chave_pixabay.txt")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY") or _chave_local("chave_pexels.txt")
 VOZ_PADRAO = "pt-BR-ThalitaMultilingualNeural"   # rode --testar-vozes e troque aqui
-VELOCIDADE = "+8%"                   # aumente/diminua para ajustar a duração
+VELOCIDADE = "+20%"                   # aumente/diminua para ajustar a duração
 TOM = "-2Hz"                         # grave/agudo: ex. "-4Hz" (mais sério), "+0Hz"
 PASTA_INICIAL = Path.home() / "Videos"   # pasta sugerida na janela de salvar
 PASTA_MUSICAS = Path(__file__).resolve().parent / "musicas"
