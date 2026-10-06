@@ -40,7 +40,7 @@ jobs:
           mkdir -p ~/.fonts
           curl -fsSL -o /tmp/selawik.zip \
             https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip \
-            && unzip -oj /tmp/selawik.zip selawk.ttf selawkb.ttf -d ~/.fonts \
+            && unzip -oj /tmp/selawik.zip selawk.ttf selawkb.ttf selawksb.ttf -d ~/.fonts \
             || echo "Selawik indisponível; usando Arial."
           curl -fsSL -o ~/.fonts/NewsCycle-Bold.ttf \
             https://raw.githubusercontent.com/google/fonts/main/ofl/newscycle/NewsCycle-Bold.ttf \
