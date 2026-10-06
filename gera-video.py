@@ -69,11 +69,11 @@ def _chave_local(nome_arquivo):
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY") or _chave_local("chave_pixabay.txt")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY") or _chave_local("chave_pexels.txt")
 VOZ_PADRAO = "pt-BR-ThalitaMultilingualNeural"   # rode --testar-vozes e troque aqui
-VELOCIDADE = "+20%"                   # aumente/diminua para ajustar a duração
+VELOCIDADE = "+8%"                   # aumente/diminua para ajustar a duração
 TOM = "-2Hz"                         # grave/agudo: ex. "-4Hz" (mais sério), "+0Hz"
 PASTA_INICIAL = Path.home() / "Videos"   # pasta sugerida na janela de salvar
 PASTA_MUSICAS = Path(__file__).resolve().parent / "musicas"
-VOLUME_MUSICA = 0.06                 # 0.06 = bem baixo | 0.15 = mais presente
+VOLUME_MUSICA = 0.07                 # 0.06 = bem baixo | 0.15 = mais presente
 APAGAR_TEMPORARIOS = True
 
 W, H, FPS = 1080, 1920, 30
@@ -92,8 +92,8 @@ DURACAO_MINIMA = 61                  # TikTok só monetiza vídeos com mais de 1
 MIN_PALAVRAS_CENA = 8                # cenas menores são juntadas à seguinte
 TRANSICAO = 0.3                      # segundos de fusão suave entre as cenas
 # Visual do vídeo: foto estática bem escura + legenda montada palavra por palavra
-OPACIDADE_FOTO = 0.30                # 0 = fundo preto liso | 1 = foto sem escurecer
-DESFOQUE_FOTO = 3                    # desfoque leve da foto, para o texto se destacar
+OPACIDADE_FOTO = 0.55                # 0 = fundo preto liso | 1 = foto sem escurecer
+DESFOQUE_FOTO = 2                    # desfoque leve da foto, para o texto se destacar
 Y_SELO_VIDEO = 150                   # selo com logo e nome no topo
 Y_CHAPEU = 470                       # etiqueta laranja da cena (texto_tela)
 Y_TEXTO_INI, Y_TEXTO_FIM = 560, 1420 # área da legenda
@@ -624,8 +624,8 @@ TEMA = {
     "calculator", "receipt", "payment", "card", "agriculture", "farm",
     "harvest", "factory", "industry", "port", "container", "fuel", "office",
 }
-GENERICAS = ["supermarket aisle", "grocery store shelves",
-             "warehouse boxes"]
+GENERICAS = ["supermarket aisle", "grocery store shelves", "shopping cart",
+             "warehouse boxes", "money coins"]
 
 # Abertura ("Bom dia, varejo!") e fechamento: imagens sorteadas a cada vídeo
 BUSCAS_ABERTURA = ["sunrise", "morning sky", "sunrise city", "morning sun",
@@ -756,15 +756,16 @@ def buscar_pixabay(busca, usados, pasta, liberar=frozenset(), sortear=False, fot
         candidatos.append((nota + 0.5 + (0.5 if vertical else 0),
                            ("video", escolhido["url"], chave, h)))
 
-    for h in _pixabay("https://pixabay.com/api/", {**base, "image_type": "photo",
-                                                    "orientation": "vertical"}):
+    for h in _pixabay("https://pixabay.com/api/", {**base, "image_type": "photo"}):
         chave, tags = f"pixabay_f{h['id']}", h.get("tags", "")
         if ja_usado(usados, chave, h.get("user_id"), tags):
             continue
         nota = pontuar(tags, busca, liberar)
-        if nota < minimo or h.get("imageHeight", 0) < 1600:  # evita fotos pequenas
+        if nota < minimo or min(h.get("imageHeight", 0), h.get("imageWidth", 0)) < 1080:
             continue
-        candidatos.append((nota, ("foto", h["largeImageURL"], chave, h)))
+        vertical = h.get("imageHeight", 0) >= h.get("imageWidth", 0)
+        candidatos.append((nota + (0.5 if vertical else 0),
+                           ("foto", h["largeImageURL"], chave, h)))
 
     for _, (tipo, url, chave, h) in variar(candidatos, folga=2 if sortear else 1):
         ext = "mp4" if tipo == "video" else "jpg"
@@ -1046,9 +1047,37 @@ def fundo_estatico(midia):
             if DESFOQUE_FOTO:
                 img = img.filter(ImageFilter.GaussianBlur(DESFOQUE_FOTO))
             preto = Image.blend(preto, img, OPACIDADE_FOTO)
+            # vinheta: escurece mais o topo (selo) e o miolo/rodapé (legenda)
+            mascara = Image.new("L", (1, H))
+            for y in range(H):
+                r = y / H
+                a = 0.55 * max(0.0, 1 - r / 0.18) + 0.35 * min(1.0, max(0.0, (r - 0.25) / 0.3))
+                mascara.putpixel((0, y), int(255 * min(0.75, a)))
+            preto = Image.composite(Image.new("RGB", (W, H)), preto,
+                                    mascara.resize((W, H)))
         except Exception as e:
             print(f"   aviso: imagem ignorada ({e})")
     return preto
+
+
+def bloco_fonte(texto):
+    """Linha "Fonte: ..." quebrada para caber entre as margens (X_TEXTO dos dois lados)."""
+    f = fonte_semibold(30)
+    d = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    linhas = quebrar_linhas(texto, f, W - 2 * X_TEXTO, d)
+    alt_linha = 40
+    pad = 8
+    img = Image.new("RGBA", (W - 2 * X_TEXTO + 2 * pad, len(linhas) * alt_linha + 2 * pad),
+                    (0, 0, 0, 0))
+    sombra = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ds, dd = ImageDraw.Draw(sombra), ImageDraw.Draw(img)
+    for n, linha in enumerate(linhas):
+        y = pad + n * alt_linha
+        ds.text((pad, y + 2), linha, font=f, fill=(0, 0, 0, 170))
+    img.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(3)))
+    for n, linha in enumerate(linhas):
+        dd.text((pad, pad + n * alt_linha), linha, font=f, fill=(165, 165, 165))
+    return img
 
 
 def chapeu(texto, laranja):
@@ -1085,6 +1114,12 @@ def montar_cena(i, cena, roteiro, pasta, usados, laranja):
         midia = buscar_midia(cena.get("busca_imagem"), usados, pasta, reforco=reforco,
                              so_fotos=True)
 
+    if midia:
+        roteiro["_ultima_midia"] = midia
+    else:
+        print("   aviso: nenhuma imagem encontrada para esta cena; "
+              "usando a da cena anterior")
+        midia = roteiro.get("_ultima_midia")
     camadas = [ImageClip(np.array(fundo_estatico(midia))).with_duration(duracao)]
 
     if cena.get("texto_tela") and not eh_cena_fixa(cena):
@@ -1093,8 +1128,8 @@ def montar_cena(i, cena, roteiro, pasta, usados, laranja):
 
     fonte_txt = cena.get("fonte") or roteiro.get("fonte")
     if fonte_txt and not eh_cena_fixa(cena):
-        img_f, _ = imagem_palavra(fonte_txt, fonte_semibold(30), (165, 165, 165))
-        camadas.append(clip_imagem(img_f, duracao, (X_TEXTO - 8, Y_FONTE_VIDEO)))
+        camadas.append(clip_imagem(bloco_fonte(fonte_txt), duracao,
+                                   (X_TEXTO - 8, Y_FONTE_VIDEO)))
 
     # Legenda: cada palavra aparece quando é falada, montando a coluna de cima para baixo
     tokens = tokens_da_narracao(narracao)
