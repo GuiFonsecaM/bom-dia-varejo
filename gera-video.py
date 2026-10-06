@@ -69,11 +69,11 @@ def _chave_local(nome_arquivo):
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY") or _chave_local("chave_pixabay.txt")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY") or _chave_local("chave_pexels.txt")
 VOZ_PADRAO = "pt-BR-ThalitaMultilingualNeural"   # rode --testar-vozes e troque aqui
-VELOCIDADE = "+20%"                   # aumente/diminua para ajustar a duração
+VELOCIDADE = "+8%"                   # aumente/diminua para ajustar a duração
 TOM = "-2Hz"                         # grave/agudo: ex. "-4Hz" (mais sério), "+0Hz"
 PASTA_INICIAL = Path.home() / "Videos"   # pasta sugerida na janela de salvar
 PASTA_MUSICAS = Path(__file__).resolve().parent / "musicas"
-VOLUME_MUSICA = 0.05                 # 0.06 = bem baixo | 0.15 = mais presente
+VOLUME_MUSICA = 0.07                 # 0.06 = bem baixo | 0.15 = mais presente
 APAGAR_TEMPORARIOS = True
 
 W, H, FPS = 1080, 1920, 30
@@ -1367,7 +1367,8 @@ def montar_story(item, roteiro):
                     int(tam_texto * 1.32), int(tam_texto * 0.55),
                     x=STORY_MARGEM + recuo, bolinha=True)
         altura += int(tam_texto * 0.6)
-        add([rodape_txt], fonte(int(tam_texto * 0.86)), COR_STORY_TEXTO,
+        f_rod = fonte(int(tam_texto * 0.86))
+        add(quebrar_linhas(rodape_txt, f_rod, largura, d), f_rod, COR_STORY_TEXTO,
             int(tam_texto * 1.25), 6)
         if data_txt:
             add([data_txt], fonte_regular(int(tam_texto * 0.78)), COR_STORY_TEXTO,
@@ -1610,7 +1611,8 @@ def montar_feed(item, laranja):
     d.polygon([(0, FEED_H - alt_barra), (larg_barra, FEED_H - alt_barra),
                (larg_barra + alt_barra, FEED_H), (0, FEED_H)], fill=laranja)
 
-    x_txt, larg = 110, FEED_W - 110 - 90
+    x_txt = 110
+    larg = FEED_W - 2 * x_txt  # mesma margem dos dois lados
     recuo = 40
     topo, base = fim_selo + 60, FEED_H - alt_barra - 70
     fonte_txt = (item.get("fonte") or "").strip()
@@ -1632,7 +1634,9 @@ def montar_feed(item, laranja):
             blocos.append(("topico", ls, es, int(tam * 1.28)))
             altura += len(ls) * int(tam * 1.28) + int(tam * 0.5)
         if fonte_txt:
-            altura += int(tam * 1.3)
+            f_fonte = fonte_regular(int(tam * 0.5))
+            linhas_fonte = quebrar_linhas(fonte_txt, f_fonte, larg, d)
+            altura += int(tam * 0.3) + len(linhas_fonte) * int(tam * 0.68)
         if altura <= base - topo or tam <= 30:
             break
         tam -= 2
@@ -1652,8 +1656,10 @@ def montar_feed(item, laranja):
             y = _desenhar_linhas(d, ls, es, x_txt + recuo, y, alt, f_reg, f_neg,
                                  COR_FEED_TEXTO, COR_FEED_TEXTO) + int(tam * 0.5)
     if fonte_txt:
-        d.text((x_txt, y + int(tam * 0.3)), fonte_txt, font=fonte_regular(int(tam * 0.5)),
-               fill=(130, 130, 130))
+        y += int(tam * 0.3)
+        for linha in linhas_fonte:
+            d.text((x_txt, y), linha, font=f_fonte, fill=(130, 130, 130))
+            y += int(tam * 0.68)
     return tela
 
 
