@@ -624,8 +624,8 @@ TEMA = {
     "calculator", "receipt", "payment", "card", "agriculture", "farm",
     "harvest", "factory", "industry", "port", "container", "fuel", "office",
 }
-GENERICAS = ["supermarket aisle", "grocery store shelves", "shopping cart",
-             "warehouse boxes", "money coins"]
+GENERICAS = ["supermarket aisle", "grocery store shelves",
+             "warehouse boxes"]
 
 # Abertura ("Bom dia, varejo!") e fechamento: imagens sorteadas a cada vídeo
 BUSCAS_ABERTURA = ["sunrise", "morning sky", "sunrise city", "morning sun",
