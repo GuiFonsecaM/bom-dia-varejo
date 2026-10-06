@@ -69,7 +69,7 @@ def _chave_local(nome_arquivo):
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY") or _chave_local("chave_pixabay.txt")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY") or _chave_local("chave_pexels.txt")
 VOZ_PADRAO = "pt-BR-ThalitaMultilingualNeural"   # rode --testar-vozes e troque aqui
-VELOCIDADE = "+20%"                   # aumente/diminua para ajustar a duração
+VELOCIDADE = "+8%"                   # aumente/diminua para ajustar a duração
 TOM = "-2Hz"                         # grave/agudo: ex. "-4Hz" (mais sério), "+0Hz"
 PASTA_INICIAL = Path.home() / "Videos"   # pasta sugerida na janela de salvar
 PASTA_MUSICAS = Path(__file__).resolve().parent / "musicas"
@@ -94,13 +94,13 @@ TRANSICAO = 0.3                      # segundos de fusão suave entre as cenas
 # Visual do vídeo: foto estática bem escura + legenda montada palavra por palavra
 OPACIDADE_FOTO = 0.55                # 0 = fundo preto liso | 1 = foto sem escurecer
 DESFOQUE_FOTO = 2                    # desfoque leve da foto, para o texto se destacar
-Y_SELO_VIDEO = 150                   # selo com logo e nome no topo
-Y_CHAPEU = 470                       # etiqueta laranja da cena (texto_tela)
-Y_TEXTO_INI, Y_TEXTO_FIM = 560, 1420 # área da legenda
-X_TEXTO = 90                         # margem lateral da legenda
+Y_SELO_VIDEO = 290                   # selo abaixo da barra "Reels" do Instagram (zona segura)
+Y_CHAPEU = 540                       # etiqueta laranja da cena (texto_tela)
+Y_TEXTO_INI, Y_TEXTO_FIM = 630, 1400 # área da legenda
+X_TEXTO = 130                        # margem lateral (livre dos ícones do Reels à direita)
 TAM_PALAVRA = 80                     # palavras normais (branco)
 TAM_DESTAQUE = 100                   # palavras de destaque (laranja, negrito)
-Y_FONTE_VIDEO = 1465                 # "Fonte: ..." (acima da área de legenda do Reels)
+Y_FONTE_VIDEO = 1440                 # "Fonte: ..." (acima da área de legenda do Reels)
 # Stories (imagem estática)
 PASTA_INICIAL_STORIES = Path.home() / "Pictures"
 # Visual do story (estilo manchete de portal): barra branca + fundo preto
