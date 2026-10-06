@@ -28,6 +28,11 @@ Banco de imagens (grátis): Pixabay -> https://pixabay.com/api/docs/
   Crie uma conta, copie a chave e cole em PIXABAY_API_KEY abaixo.
   (Pexels também funciona, se você já tiver uma chave.)
 
+Vídeo: foto fixa escurecida, selo com logo no topo e legenda montada palavra por
+  palavra, sincronizada com a voz. Na narração, **palavras entre asteriscos** saem em
+  laranja, negrito e maiores (os asteriscos não são lidos). Sem asteriscos na cena,
+  os números viram destaque. O "texto_tela" vira a etiqueta laranja da cena.
+
 Resultado: uma janela do Explorador abre para você escolher onde salvar.
   Vídeo:   [data]_bom-dia-varejo_[noticia|curiosidade].mp4  + _legendas.txt
   Stories: [data]_story_[noticia|curiosidade].jpg  (uma imagem por JSON)
@@ -49,9 +54,9 @@ import edge_tts
 import numpy as np
 import requests
 from moviepy import (AudioFileClip, ColorClip, CompositeAudioClip,
-                     CompositeVideoClip, ImageClip, VideoFileClip,
+                     CompositeVideoClip, ImageClip, VideoClip, VideoFileClip,
                      afx, concatenate_videoclips, vfx)
-from PIL import Image, ImageDraw, ImageFont, ImageOps
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageOps
 
 # ============================ CONFIGURAÇÃO ============================
 def _chave_local(nome_arquivo):
@@ -64,7 +69,7 @@ def _chave_local(nome_arquivo):
 PIXABAY_API_KEY = os.getenv("PIXABAY_API_KEY") or _chave_local("chave_pixabay.txt")
 PEXELS_API_KEY = os.getenv("PEXELS_API_KEY") or _chave_local("chave_pexels.txt")
 VOZ_PADRAO = "pt-BR-ThalitaMultilingualNeural"   # rode --testar-vozes e troque aqui
-VELOCIDADE = "+8%"                   # aumente/diminua para ajustar a duração
+VELOCIDADE = "+20%"                   # aumente/diminua para ajustar a duração
 TOM = "-2Hz"                         # grave/agudo: ex. "-4Hz" (mais sério), "+0Hz"
 PASTA_INICIAL = Path.home() / "Videos"   # pasta sugerida na janela de salvar
 PASTA_MUSICAS = Path(__file__).resolve().parent / "musicas"
@@ -86,6 +91,16 @@ Y_DESTAQUE = int(1920 * 0.33)  # caixa de destaque da cena
 DURACAO_MINIMA = 61                  # TikTok só monetiza vídeos com mais de 1 min
 MIN_PALAVRAS_CENA = 8                # cenas menores são juntadas à seguinte
 TRANSICAO = 0.3                      # segundos de fusão suave entre as cenas
+# Visual do vídeo: foto estática bem escura + legenda montada palavra por palavra
+OPACIDADE_FOTO = 0.30                # 0 = fundo preto liso | 1 = foto sem escurecer
+DESFOQUE_FOTO = 3                    # desfoque leve da foto, para o texto se destacar
+Y_SELO_VIDEO = 150                   # selo com logo e nome no topo
+Y_CHAPEU = 470                       # etiqueta laranja da cena (texto_tela)
+Y_TEXTO_INI, Y_TEXTO_FIM = 560, 1420 # área da legenda
+X_TEXTO = 90                         # margem lateral da legenda
+TAM_PALAVRA = 80                     # palavras normais (branco)
+TAM_DESTAQUE = 100                   # palavras de destaque (laranja, negrito)
+Y_FONTE_VIDEO = 1465                 # "Fonte: ..." (acima da área de legenda do Reels)
 # Stories (imagem estática)
 PASTA_INICIAL_STORIES = Path.home() / "Pictures"
 # Visual do story (estilo manchete de portal): barra branca + fundo preto
@@ -430,6 +445,21 @@ def _textlength(self, text, font=None, *args, **kwargs):
 
 ImageDraw.ImageDraw.text = _text
 ImageDraw.ImageDraw.textlength = _textlength
+
+
+FONTES_SEMIBOLD = [
+    "C:/Windows/Fonts/seguisb.ttf",
+    f"{_PASTA_FONTES}/seguisb.ttf",
+    f"{_HOME_FONTES}/selawksb.ttf",
+    f"{_PASTA_FONTES}/selawksb.ttf",
+]
+
+
+def fonte_semibold(tamanho):
+    for caminho in FONTES_SEMIBOLD:
+        if os.path.exists(caminho):
+            return ImageFont.truetype(caminho, tamanho)
+    return fonte(tamanho)
 
 
 def fonte_regular(tamanho):
@@ -880,50 +910,261 @@ def termos_da_noticia(roteiro, a_partir_de):
     return termos
 
 
-def montar_cena(i, cena, roteiro, pasta, usados, img_marca):
-    print(f"-> Cena {i}: {cena['narracao'][:60]}...")
+def _norm(s):
+    return re.sub(r"[^0-9a-zà-ÿ]", "", str(s).lower())
+
+
+def tokens_da_narracao(narracao):
+    """Separa a narração em palavras. Trechos entre **asteriscos** são destaque.
+    Se a cena não tiver nenhum **, os números (47%, R$ 10, 2026) viram destaque."""
+    tokens = []  # [texto, destaque]
+    marcado = "**" in narracao
+    for parte in re.split(r"(\*\*.+?\*\*)", narracao):
+        if not parte:
+            continue
+        dest = parte.startswith("**") and parte.endswith("**") and len(parte) > 4
+        txt = parte[2:-2] if dest else parte
+        palavras = txt.split()
+        if palavras and tokens and not txt[:1].isspace() and not dest and not _norm(palavras[0]):
+            tokens[-1][0] += palavras.pop(0)  # pontuação colada ao destaque: "47%."
+        for pw in palavras:
+            hl = dest or (not marcado and bool(re.search(r"\d", pw)))
+            tokens.append([pw, hl])
+    return tokens
+
+
+def tempos_das_palavras(tokens, marcas, duracao):
+    """Casa as palavras da tela com as marcações de tempo da voz (WordBoundary)."""
+    n = len(tokens)
+    tempos = [None] * n
+    k, sobra, ini_sobra = 0, 0, 0.0
+    for j, (txt, _) in enumerate(tokens):
+        alvo = len(_norm(txt))
+        if not alvo:
+            continue
+        if sobra:
+            tempos[j] = ini_sobra
+            usado = min(sobra, alvo)
+            sobra, alvo = sobra - usado, alvo - usado
+        while alvo > 0 and k < len(marcas):
+            L = len(_norm(marcas[k][2])) or 1
+            if tempos[j] is None:
+                tempos[j] = marcas[k][0]
+            ini_sobra = marcas[k][0]
+            k += 1
+            if L >= alvo:
+                sobra, alvo = L - alvo, 0
+            else:
+                alvo -= L
+    # sem marcação (ou acabou): distribui pelo tamanho das palavras
+    ultimo = max([i for i, x in enumerate(tempos) if x is not None], default=-1)
+    if ultimo < n - 1:
+        if ultimo >= 0:
+            t0, acc = tempos[ultimo], len(tokens[ultimo][0]) + 1
+        else:
+            t0, acc = 0.0, 0
+        total = acc + sum(len(x[0]) + 1 for x in tokens[ultimo + 1:])
+        janela = max(0.5, duracao * 0.97 - t0)
+        for i in range(ultimo + 1, n):
+            tempos[i] = t0 + janela * acc / total
+            acc += len(tokens[i][0]) + 1
+    anterior = 0.0
+    for i in range(n):  # garante ordem crescente
+        if tempos[i] is None or tempos[i] < anterior:
+            tempos[i] = anterior
+        anterior = tempos[i]
+    return tempos
+
+
+def paginar(tokens, f_norm, f_dest, d):
+    """Monta a coluna: quebra em linhas pela largura e em páginas pela altura.
+    Cada frase começa numa página nova. Devolve [(índices, [(i, x, linha)])...]."""
+    largura = W - 2 * X_TEXTO
+    espaco = d.textlength(" ", font=f_norm)
+    frases, atual = [], []
+    for i, (txt, _) in enumerate(tokens):
+        atual.append(i)
+        if re.search(r"[.!?…]$", txt):
+            frases.append(atual)
+            atual = []
+    if atual:
+        frases.append(atual)
+
+    paginas = []
+    for frase in frases:
+        linhas, linha, w = [], [], 0
+        for i in frase:
+            f = f_dest if tokens[i][1] else f_norm
+            lw = d.textlength(tokens[i][0], font=f)
+            if linha and w + espaco + lw > largura:
+                linhas.append(linha)
+                linha, w = [], 0
+            linha.append((i, w if not linha else w + espaco))
+            w = (w + espaco + lw) if len(linha) > 1 else lw
+        if linha:
+            linhas.append(linha)
+        pagina, y = [], Y_TEXTO_INI
+        for linha in linhas:
+            maior = max(TAM_DESTAQUE if tokens[i][1] else TAM_PALAVRA for i, _ in linha)
+            alt = int(maior * 1.2)
+            if pagina and y + alt > Y_TEXTO_FIM:
+                paginas.append(pagina)
+                pagina, y = [], Y_TEXTO_INI
+            base = y + int(maior * 0.95)  # linha de base comum para tamanhos diferentes
+            pagina += [(i, X_TEXTO + x, base) for i, x in linha]
+            y += alt
+        if pagina:
+            paginas.append(pagina)
+    return paginas
+
+
+def imagem_palavra(texto, font, cor):
+    """Uma palavra com sombra suave. Devolve (imagem, deslocamento da linha de base)."""
+    sobe, desce = font.getmetrics()
+    pad = 8
+    larg = int(ImageDraw.Draw(Image.new("RGBA", (1, 1))).textlength(texto, font=font)) + 2 * pad
+    img = Image.new("RGBA", (larg, sobe + desce + 2 * pad), (0, 0, 0, 0))
+    sombra = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    ImageDraw.Draw(sombra).text((pad, pad + sobe + 3), texto, font=font, fill=(0, 0, 0, 170), anchor="ls")
+    img.alpha_composite(sombra.filter(ImageFilter.GaussianBlur(4)))
+    ImageDraw.Draw(img).text((pad, pad + sobe), texto, font=font, fill=cor, anchor="ls")
+    return img, pad + sobe
+
+
+def fundo_estatico(midia):
+    """Foto fixa, desfocada de leve e bem escurecida sobre preto."""
+    preto = Image.new("RGB", (W, H), (0, 0, 0))
+    if midia:
+        try:
+            if midia[0] == "foto":
+                img = Image.open(midia[1]).convert("RGB")
+            else:
+                clip = VideoFileClip(str(midia[1]), audio=False)
+                img = Image.fromarray(clip.get_frame(min(1.0, clip.duration / 2)))
+                clip.close()
+            img = ImageOps.fit(img, (W, H), Image.LANCZOS)
+            if DESFOQUE_FOTO:
+                img = img.filter(ImageFilter.GaussianBlur(DESFOQUE_FOTO))
+            preto = Image.blend(preto, img, OPACIDADE_FOTO)
+        except Exception as e:
+            print(f"   aviso: imagem ignorada ({e})")
+    return preto
+
+
+def chapeu(texto, laranja):
+    """Etiqueta da cena: barra laranja + texto em caixa alta."""
+    f = fonte(34)
+    d = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    larg = int(d.textlength(texto, font=f))
+    img = Image.new("RGBA", (larg + 30, 50), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(img)
+    dd.rectangle([0, 6, 7, 44], fill=laranja)
+    dd.text((22, 25), texto, font=f, fill=laranja, anchor="lm")
+    return img
+
+
+def montar_cena(i, cena, roteiro, pasta, usados, laranja):
+    narracao = cena["narracao"]
+    print(f"-> Cena {i}: {narracao.replace('**', '')[:60]}...")
     caminho_audio = pasta / f"cena_{i:02d}.mp3"
-    palavras = narrar(cena["narracao"], roteiro["voz"], caminho_audio)
+    marcas = narrar(narracao.replace("**", ""), roteiro["voz"], caminho_audio)
     audio = AudioFileClip(str(caminho_audio))
     ABERTOS.append(audio)
     duracao = audio.duration + TRANSICAO + 0.1  # silêncio no fim cobre a fusão
 
     tipo = cena.get("tipo")
     if eh_cena_fixa(cena):
-        fechamento = tipo == "fechamento" or cena["narracao"].lower().startswith("isso foi")
+        fechamento = tipo == "fechamento" or narracao.lower().startswith("isso foi")
         buscas = list(BUSCAS_FECHAMENTO if fechamento else BUSCAS_ABERTURA)
         random.shuffle(buscas)
-        midia = buscar_midia(buscas, usados, pasta, LIBERAR_FIXAS, sortear=True, genericas=False)
-        cena = {**cena, "texto_tela": ""}
+        midia = buscar_midia(buscas, usados, pasta, LIBERAR_FIXAS, sortear=True,
+                             genericas=False, so_fotos=True)
     else:
         primeira = not any(not eh_cena_fixa(c) for c in roteiro["cenas"][:i - 1])
-        if tipo == "gancho" or primeira:
-            midia = buscar_midia(cena.get("busca_imagem"), usados, pasta,
-                                 reforco=termos_da_noticia(roteiro, i))
-        else:
-            midia = buscar_midia(cena.get("busca_imagem"), usados, pasta)
+        reforco = termos_da_noticia(roteiro, i) if (tipo == "gancho" or primeira) else None
+        midia = buscar_midia(cena.get("busca_imagem"), usados, pasta, reforco=reforco,
+                             so_fotos=True)
 
-    camadas = [
-        montar_fundo(midia, duracao),
-        ColorClip((W, H), color=(0, 0, 0)).with_opacity(0.38).with_duration(duracao),
-        clip_imagem(img_marca, duracao, ("center", Y_MARCA)),
-    ]
+    camadas = [ImageClip(np.array(fundo_estatico(midia))).with_duration(duracao)]
+
+    if cena.get("texto_tela") and not eh_cena_fixa(cena):
+        camadas.append(clip_imagem(chapeu(cena["texto_tela"].upper(), laranja), duracao,
+                                   (X_TEXTO, Y_CHAPEU)))
 
     fonte_txt = cena.get("fonte") or roteiro.get("fonte")
-    if fonte_txt:
-        img_fonte = imagem_texto(fonte_txt, 34, cor=(230, 230, 230), contorno=3, margem=10)
-        camadas.append(clip_imagem(img_fonte, duracao, ("center", Y_FONTE)))
+    if fonte_txt and not eh_cena_fixa(cena):
+        img_f, _ = imagem_palavra(fonte_txt, fonte_semibold(30), (165, 165, 165))
+        camadas.append(clip_imagem(img_f, duracao, (X_TEXTO - 8, Y_FONTE_VIDEO)))
 
-    if cena.get("texto_tela"):
-        img_destaque = imagem_texto(cena["texto_tela"].upper(), 92, cor=COR_TEXTO_DESTAQUE, titulo=True,
-                                    fundo=COR_DESTAQUE + (240,), largura_max=W - 140)
-        camadas.append(clip_imagem(img_destaque, duracao, ("center", Y_DESTAQUE)))
+    # Legenda: cada palavra aparece quando é falada, montando a coluna de cima para baixo
+    tokens = tokens_da_narracao(narracao)
+    tempos = tempos_das_palavras(tokens, marcas, audio.duration)
+    f_norm, f_dest = fonte_semibold(TAM_PALAVRA), fonte(TAM_DESTAQUE)
+    d = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    paginas = paginar(tokens, f_norm, f_dest, d)
+    for p, pagina in enumerate(paginas):
+        fim_pag = tempos[paginas[p + 1][0][0]] if p + 1 < len(paginas) else duracao
+        for idx, x, base in pagina:
+            txt, hl = tokens[idx]
+            img, desloc = imagem_palavra(txt, f_dest if hl else f_norm,
+                                         laranja if hl else (255, 255, 255))
+            ini_w = min(tempos[idx], fim_pag - 0.15)
+            y = base - desloc
 
-    for ini, fim, texto in blocos_legenda(palavras, cena["narracao"], audio.duration):
-        img_legenda = imagem_texto(texto, TAMANHO_LEGENDA, serifa=True, contorno=4)
-        camadas.append(clip_imagem(img_legenda, fim - ini, ("center", int(H * 0.64)), ini))
+            def pos(tt, x=x - 8, y=y):  # sobe 14 px enquanto aparece
+                return (x, y + 14 * max(0.0, 1 - tt / 0.16))
+            c = (ImageClip(np.array(img), transparent=True)
+                 .with_start(ini_w).with_duration(max(0.15, fim_pag - ini_w))
+                 .with_position(pos).with_effects([vfx.CrossFadeIn(0.14)]))
+            camadas.append(c)
 
     return CompositeVideoClip(camadas, size=(W, H)).with_duration(duracao).with_audio(audio)
+
+
+def _data_extenso(data):
+    meses = ["JANEIRO", "FEVEREIRO", "MARÇO", "ABRIL", "MAIO", "JUNHO", "JULHO",
+             "AGOSTO", "SETEMBRO", "OUTUBRO", "NOVEMBRO", "DEZEMBRO"]
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(data or ""))
+    return f"{int(m[3])} DE {meses[int(m[2]) - 1]} DE {m[1]}" if m else ""
+
+
+def selo_video(laranja, data):
+    """Selo do topo (igual ao do feed, em versão escura) + data por extenso."""
+    alt = 104
+    logo = _logo(alt - 24, cor_fundo=laranja)
+    f1 = fonte(28)
+    d = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    larg_txt = max(d.textlength("Bom dia,", font=f1), d.textlength("Varejo", font=f1))
+    larg = 12 + logo.width + 16 + int(larg_txt) + 30
+    data_txt = _data_extenso(data)
+    f2 = fonte_semibold(24)
+    larg_total = max(larg, int(d.textlength(data_txt, font=f2)) + 4)
+    img = Image.new("RGBA", (larg_total, alt + 54), (0, 0, 0, 0))
+    dd = ImageDraw.Draw(img)
+    x0 = (larg_total - larg) // 2
+    dd.rounded_rectangle([x0, 0, x0 + larg, alt], radius=alt // 2, fill=(0, 0, 0, 110),
+                         outline=(255, 255, 255, 70), width=2)
+    img.alpha_composite(logo, (x0 + 12, 12))
+    xt = x0 + 12 + logo.width + 16
+    dd.text((xt, alt / 2 - 3), "Bom dia,", font=f1, fill=(255, 255, 255), anchor="ls")
+    dd.text((xt, alt / 2 + 3), "Varejo", font=f1, fill=(255, 255, 255), anchor="lt")
+    if data_txt:
+        dd.text((larg_total / 2, alt + 34), data_txt, font=f2, fill=(170, 170, 170), anchor="mm")
+    return img
+
+
+def barra_progresso(duracao, laranja, largura=300, altura=4):
+    """Barrinha laranja que enche ao longo do vídeo."""
+    trilho = np.array([60, 60, 60], dtype=np.uint8)
+    cheio = np.array(laranja, dtype=np.uint8)
+
+    def quadro(tt):
+        f = np.empty((altura, largura, 3), dtype=np.uint8)
+        n = int(largura * min(1.0, tt / duracao))
+        f[:, :n] = cheio
+        f[:, n:] = trilho
+        return f
+    return VideoClip(frame_function=quadro, duration=duracao)
 
 
 # ------------------------------- SAÍDA --------------------------------
@@ -1495,10 +1736,9 @@ def main():
     if not (tem_chave(PIXABAY_API_KEY) or tem_chave(PEXELS_API_KEY)):
         print("Aviso: sem chave do Pixabay, as cenas terão fundo liso.\n")
 
-    img_marca = imagem_texto(NOME_CANAL, 44, cor=COR_TEXTO_MARCA,
-                             fundo=COR_MARCA + (230,), margem=18)
+    laranja = cor_laranja()
     usados = set()
-    cenas = [montar_cena(i, c, roteiro, pasta_tmp, usados, img_marca)
+    cenas = [montar_cena(i, c, roteiro, pasta_tmp, usados, laranja)
              for i, c in enumerate(roteiro["cenas"], 1)]
 
     # fusão suave: cada cena começa um pouco antes do fim da anterior
@@ -1508,7 +1748,13 @@ def main():
             c = c.with_effects([vfx.CrossFadeIn(TRANSICAO)])
         partes.append(c.with_start(inicio))
         inicio += c.duration - TRANSICAO
-    video = CompositeVideoClip(partes, size=(W, H)).with_duration(inicio + TRANSICAO)
+    total = inicio + TRANSICAO
+    selo = selo_video(laranja, data)
+    y_barra = Y_SELO_VIDEO + selo.height + 18
+    video = CompositeVideoClip(
+        partes + [clip_imagem(selo, total, ("center", Y_SELO_VIDEO)),
+                  barra_progresso(total, laranja).with_position(("center", y_barra))],
+        size=(W, H)).with_duration(total)
     musicas = sorted(p for p in PASTA_MUSICAS.glob("*")
                      if p.suffix.lower() in (".mp3", ".wav", ".m4a", ".ogg")) \
         if PASTA_MUSICAS.exists() else []
